@@ -531,7 +531,7 @@ func totalSaving(wa models.WorkloadAnalysis) float64 {
 // isExcludedNamespace checks if a namespace is in the exclusion list.
 func (s *Server) isExcludedNamespace(ns string) bool {
 	for _, excluded := range s.cfg.ExcludeNamespaces {
-		if strings.EqualFold(strings.TrimSpace(excluded), ns) {
+		if strings.EqualFold(strings.TrimSpace(excluded), strings.TrimSpace(ns)) {
 			return true
 		}
 	}

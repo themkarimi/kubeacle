@@ -716,11 +716,22 @@ function Recommendations({ workloads, loading, onSelect, toast }) {
     })
   }
 
+  const visibleIds = new Set(wl.map(w => w.id))
+  const allVisibleSelected = wl.length > 0 && wl.every(w => selected.has(w.id))
+
   const selectAll = () => {
-    if (selected.size === wl.length) {
-      setSelected(new Set())
+    if (allVisibleSelected) {
+      setSelected(prev => {
+        const next = new Set(prev)
+        visibleIds.forEach(id => next.delete(id))
+        return next
+      })
     } else {
-      setSelected(new Set(wl.map(w => w.id)))
+      setSelected(prev => {
+        const next = new Set(prev)
+        visibleIds.forEach(id => next.add(id))
+        return next
+      })
     }
   }
 
@@ -770,7 +781,7 @@ function Recommendations({ workloads, loading, onSelect, toast }) {
         </select>
         <div style={{ flex: 1 }} />
         <button onClick={selectAll} style={btnStyle()}>
-          {selected.size === wl.length && wl.length > 0 ? 'Deselect All' : 'Select All'}
+          {allVisibleSelected ? 'Deselect All' : 'Select All'}
         </button>
         <button onClick={() => exportData('yaml')} disabled={exporting || selected.size === 0}
           style={{ ...btnStyle(C.cyan), opacity: selected.size === 0 ? 0.4 : 1 }}>
