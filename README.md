@@ -6,22 +6,22 @@
 
 ## Overview
 
-Kubeacle connects to a Prometheus instance, analyzes CPU and memory requests and limits on Kubernetes workloads (Deployments and StatefulSets), evaluates real usage patterns over a configurable lookback window, and generates intelligent rightsizing recommendations. It surfaces over-provisioned and under-provisioned containers, estimates cost savings, and exports corrective patches as YAML or Helm values — giving platform teams a clear, actionable path to better resource efficiency.
+Kubeacle connects to a Prometheus-compatible metrics backend, analyzes CPU and memory requests and limits on Kubernetes workloads (Deployments and StatefulSets), evaluates real usage patterns over a configurable lookback window, and generates intelligent rightsizing recommendations. It surfaces over-provisioned and under-provisioned containers, estimates cost savings, and exports corrective patches as YAML or Helm values — giving platform teams a clear, actionable path to better resource efficiency.
 
 ## Architecture
 
 ```
-┌────────────┐      ┌────────────────┐      ┌────────────┐
-│  React UI  │─────▶│  Go Backend    │─────▶│ Prometheus  │
-│  (Vite)    │ :3000│  (Chi router)  │ :8080│             │ :9090
-└────────────┘      └────────────────┘      └────────────┘
+┌────────────┐      ┌────────────────┐      ┌──────────────────────────┐
+│  React UI  │─────▶│  Go Backend    │─────▶│ Prometheus               │
+│  (Vite)    │ :3000│  (Chi router)  │ :8080│ — or — VictoriaMetrics   │ :9090/:8428
+└────────────┘      └────────────────┘      └──────────────────────────┘
 ```
 
 | Layer | Technology | Details |
 |-------|-----------|---------|
 | **Backend** | Go 1.23, Chi v5 | REST API, analysis engine, in-memory cache, mock-mode support |
 | **Frontend** | React 18, Recharts, Vite | Interactive dashboard with charts, filtering, and export controls |
-| **Metrics** | Prometheus | Collects and serves container resource usage time-series |
+| **Metrics** | Prometheus **or VictoriaMetrics** | Collects and serves container resource usage time-series |
 | **Orchestration** | Docker Compose | Single-command local development stack |
 
 ## Project Structure
@@ -52,7 +52,8 @@ kubeacle/
 │       ├── models/
 │       │   └── types.go              # Shared data structures
 │       └── prometheus/
-│           └── client.go             # Prometheus query client
+│           ├── client.go             # Prometheus/VictoriaMetrics query client
+│           └── client_test.go
 └── ui/                                # React frontend
     ├── Dockerfile
     ├── index.html
@@ -126,9 +127,9 @@ All settings are controlled via environment variables with sensible defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MOCK_MODE` | `true` | Use generated fake data instead of live Prometheus queries |
+| `MOCK_MODE` | `true` | Use generated fake data instead of live metrics queries |
 | `PORT` | `8080` | HTTP server listen port |
-| `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server URL |
+| `PROMETHEUS_URL` | `http://localhost:9090` | Metrics backend URL (Prometheus **or** VictoriaMetrics) |
 | `LOOKBACK_WINDOW` | `168h` | Historical analysis window (Go duration) |
 | `HEADROOM_FACTOR` | `0.20` | Safety margin added on top of recommendations (20 %) |
 | `SPIKE_PERCENTILE` | `P95` | Percentile used for limit calculations (`P90`, `P95`, `P99`, `Max`) |
@@ -153,12 +154,69 @@ This makes it easy to demo, develop, and test without any cluster infrastructure
 To run against a real cluster:
 
 1. Set `MOCK_MODE=false`.
-2. Point `PROMETHEUS_URL` to your in-cluster Prometheus instance (e.g. `http://prometheus-server.monitoring.svc:9090`).
-3. Ensure Prometheus is scraping `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes` metrics from your kubelets / cAdvisor.
+2. Point `PROMETHEUS_URL` to your in-cluster Prometheus **or VictoriaMetrics** instance.
+3. Ensure your metrics backend is scraping `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes` from the kubelet/cAdvisor, and that `kube-state-metrics` is deployed.
 
 ```bash
 docker-compose up --build -e MOCK_MODE=false -e PROMETHEUS_URL=http://prometheus:9090
 ```
+
+## VictoriaMetrics Support
+
+Kubeacle is fully compatible with [VictoriaMetrics](https://victoriametrics.com/) as a drop-in alternative to Prometheus. VictoriaMetrics implements the Prometheus HTTP API (`/api/v1/query`, `/api/v1/label/<name>/values`, `/-/healthy`, etc.), so no code changes are needed — simply point `PROMETHEUS_URL` at your VictoriaMetrics instance.
+
+### Using VictoriaMetrics with Docker Compose
+
+```bash
+MOCK_MODE=false PROMETHEUS_URL=http://victoriametrics:8428 docker-compose up --build
+```
+
+### Using VictoriaMetrics with the Helm chart
+
+```yaml
+# values.yaml — use VictoriaMetrics instead of the bundled Prometheus
+prometheus:
+  enabled: false
+
+victoriametrics:
+  enabled: true
+
+backend:
+  config:
+    mockMode: "false"
+    prometheusUrl: "http://<release-name>-victoriametrics:8428"
+```
+
+```bash
+helm upgrade --install kubeacle ./helm/kubeacle -f values.yaml
+```
+
+### Using an external VictoriaMetrics instance
+
+```yaml
+prometheus:
+  enabled: false
+
+victoriametrics:
+  enabled: false
+
+backend:
+  config:
+    mockMode: "false"
+    prometheusUrl: "http://victoria-metrics.monitoring.svc:8428"
+```
+
+### Metrics required from kube-state-metrics and cAdvisor
+
+When running in live mode (`MOCK_MODE=false`), Kubeacle expects the following metric families to be available in the metrics backend:
+
+| Source | Metrics |
+|--------|---------|
+| kube-state-metrics | `kube_deployment_spec_replicas`, `kube_statefulset_spec_replicas` |
+| kube-state-metrics | `kube_pod_owner`, `kube_replicaset_owner` |
+| kube-state-metrics | `kube_pod_container_resource_requests`, `kube_pod_container_resource_limits` |
+| kube-state-metrics | `kube_pod_container_info` |
+| kubelet / cAdvisor | `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes` |
 
 ## Testing
 
@@ -180,7 +238,7 @@ Tests cover the analysis engine, API handlers, and mock data provider.
 | Charts | [Recharts](https://recharts.org/) |
 | Build tool | [Vite](https://vitejs.dev/) |
 | Production server | Nginx |
-| Metrics | Prometheus |
+| Metrics | Prometheus or VictoriaMetrics |
 | Containerisation | Docker & Docker Compose |
 
 ## License

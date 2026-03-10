@@ -1,0 +1,18 @@
+{{- if and .Values.victoriametrics.enabled .Values.victoriametrics.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kubeacle.victoriametrics.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "kubeacle.victoriametrics.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.victoriametrics.persistence.accessMode | quote }}
+  {{- if .Values.victoriametrics.persistence.storageClass }}
+  storageClassName: {{ .Values.victoriametrics.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.victoriametrics.persistence.size | quote }}
+{{- end }}

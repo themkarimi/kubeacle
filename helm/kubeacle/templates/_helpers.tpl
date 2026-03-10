@@ -144,6 +144,36 @@ Prometheus image tag.
 {{- end }}
 
 {{/*
+VictoriaMetrics component full name.
+*/}}
+{{- define "kubeacle.victoriametrics.fullname" -}}
+{{- printf "%s-victoriametrics" (include "kubeacle.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+VictoriaMetrics-specific labels.
+*/}}
+{{- define "kubeacle.victoriametrics.labels" -}}
+{{ include "kubeacle.labels" . }}
+app.kubernetes.io/component: victoriametrics
+{{- end }}
+
+{{/*
+VictoriaMetrics-specific selector labels.
+*/}}
+{{- define "kubeacle.victoriametrics.selectorLabels" -}}
+{{ include "kubeacle.selectorLabels" . }}
+app.kubernetes.io/component: victoriametrics
+{{- end }}
+
+{{/*
+VictoriaMetrics image tag.
+*/}}
+{{- define "kubeacle.victoriametrics.image" -}}
+{{- printf "%s:%s" .Values.victoriametrics.image.repository .Values.victoriametrics.image.tag }}
+{{- end }}
+
+{{/*
 Service account name.
 */}}
 {{- define "kubeacle.serviceAccountName" -}}

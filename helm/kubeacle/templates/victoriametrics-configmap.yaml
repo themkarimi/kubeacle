@@ -1,0 +1,25 @@
+{{- if .Values.victoriametrics.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubeacle.victoriametrics.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "kubeacle.victoriametrics.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'rightsizer'
+        static_configs:
+          - targets: ['{{ include "kubeacle.backend.fullname" . }}:{{ .Values.backend.service.port }}']
+        metrics_path: /metrics
+        scrape_interval: {{ .Values.victoriametrics.scrapeInterval }}
+
+      - job_name: 'victoriametrics'
+        static_configs:
+          - targets: ['localhost:{{ .Values.victoriametrics.service.port }}']
+{{- end }}

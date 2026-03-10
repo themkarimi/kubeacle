@@ -1,0 +1,18 @@
+{{- if .Values.victoriametrics.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubeacle.victoriametrics.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "kubeacle.victoriametrics.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.victoriametrics.service.type }}
+  selector:
+    {{- include "kubeacle.victoriametrics.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.victoriametrics.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

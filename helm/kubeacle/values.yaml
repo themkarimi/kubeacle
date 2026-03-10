@@ -215,6 +215,80 @@ prometheus:
         - ALL
 
 # ─────────────────────────────────────────────────────────────────────────────
+# VictoriaMetrics (optional – alternative to the bundled Prometheus)
+#
+# VictoriaMetrics implements the Prometheus HTTP API, so the backend talks to
+# it with the same client. To use it instead of Prometheus:
+#   1. Set victoriametrics.enabled: true
+#   2. Set prometheus.enabled: false
+#   3. Set backend.config.prometheusUrl to the VictoriaMetrics service URL
+#      (e.g. "http://kubeacle-victoriametrics:8428").
+# ─────────────────────────────────────────────────────────────────────────────
+victoriametrics:
+  # -- Deploy a bundled VictoriaMetrics instance as an alternative to Prometheus.
+  enabled: false
+
+  image:
+    # -- VictoriaMetrics container image repository.
+    repository: victoriametrics/victoria-metrics
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+    # -- VictoriaMetrics image tag.
+    tag: "v1.115.0"
+
+  # -- Number of VictoriaMetrics replicas (usually 1).
+  replicaCount: 1
+
+  service:
+    # -- Kubernetes Service type for VictoriaMetrics.
+    type: ClusterIP
+    # -- Service port (VictoriaMetrics default HTTP port).
+    port: 8428
+
+  # -- Data retention period (e.g. "1", "12", "1d", "1w", "1y").
+  retentionPeriod: "1"
+  # -- How often VictoriaMetrics scrapes the backend metrics endpoint.
+  scrapeInterval: "30s"
+
+  persistence:
+    # -- Enable persistent storage for VictoriaMetrics data.
+    enabled: false
+    # -- StorageClass name. Leave empty to use the cluster default.
+    storageClass: ""
+    # -- PVC access mode.
+    accessMode: ReadWriteOnce
+    # -- PVC size.
+    size: 10Gi
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # -- Node selector for the VictoriaMetrics pod.
+  nodeSelector: {}
+  # -- Tolerations for the VictoriaMetrics pod.
+  tolerations: []
+  # -- Affinity rules for the VictoriaMetrics pod.
+  affinity: {}
+  # -- Annotations to add to the VictoriaMetrics pod.
+  podAnnotations: {}
+  # -- Security context for the VictoriaMetrics pod.
+  podSecurityContext:
+    fsGroup: 65534
+  # -- Security context for the VictoriaMetrics container.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Ingress
 # ─────────────────────────────────────────────────────────────────────────────
 ingress:
