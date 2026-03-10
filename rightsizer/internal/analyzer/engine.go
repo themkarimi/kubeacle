@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubeacle/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
 
 // Engine performs rightsizing analysis on Kubernetes workloads.

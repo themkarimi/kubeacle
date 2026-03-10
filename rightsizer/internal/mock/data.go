@@ -3,7 +3,7 @@ package mock
 import (
 	"math/rand"
 
-	"github.com/kubeacle/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
 
 // MockDataProvider generates deterministic fake workload data for development

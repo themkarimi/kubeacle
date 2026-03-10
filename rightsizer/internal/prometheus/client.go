@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kubeacle/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
 
 // Client wraps the Prometheus HTTP API

@@ -7,10 +7,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
-	"github.com/kubeacle/kubeacle/rightsizer/internal/analyzer"
-	"github.com/kubeacle/kubeacle/rightsizer/internal/mock"
-	"github.com/kubeacle/kubeacle/rightsizer/internal/models"
-	"github.com/kubeacle/kubeacle/rightsizer/internal/prometheus"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/analyzer"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/mock"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/prometheus"
 )
 
 type Server struct {

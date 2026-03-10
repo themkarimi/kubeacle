@@ -13,8 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kubeacle/kubeacle/rightsizer/internal/analyzer"
-	"github.com/kubeacle/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/analyzer"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
 
 // AnalysisCache is a simple in-memory cache with TTL support.
