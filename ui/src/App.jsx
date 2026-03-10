@@ -496,7 +496,8 @@ function WorkloadDetail({ workload, onBack, toast }) {
     return `# ${c.name}\nresources:\n  requests:\n    cpu: "${rec.cpu_request || '?'}m"\n    memory: "${rec.memory_request || '?'}Mi"\n  limits:\n    cpu: "${rec.cpu_limit || '?'}m"\n    memory: "${rec.memory_limit || '?'}Mi"`
   }).join('\n---\n')
 
-  const kubectlCmd = w.kubectl_command || `kubectl set resources deployment/${w.name} -n ${w.namespace} ${containers.map(c => {
+  const resourceKind = (w.kind || 'deployment').toLowerCase()
+  const kubectlCmd = w.kubectl_command || `kubectl set resources ${resourceKind}/${w.name} -n ${w.namespace} ${containers.map(c => {
     const rec = c.recommendation || {}
     return `-c ${c.name} --requests=cpu=${rec.cpu_request || '?'}m,memory=${rec.memory_request || '?'}Mi --limits=cpu=${rec.cpu_limit || '?'}m,memory=${rec.memory_limit || '?'}Mi`
   }).join(' ')}`
