@@ -63,8 +63,6 @@ func (s *Server) setupRouter() {
 		r.Get("/workloads/{namespace}/{name}/analysis", s.handleGetWorkloadAnalysis)
 		r.Get("/recommendations", s.handleGetRecommendations)
 		r.Get("/cluster/summary", s.handleGetClusterSummary)
-		r.Post("/export/yaml", s.handleExportYAML)
-		r.Post("/export/helm", s.handleExportHelm)
 		r.Get("/config", s.handleGetConfig)
 		r.Put("/config", s.handleUpdateConfig)
 		r.Post("/config/test-prometheus", s.handleTestPrometheus)

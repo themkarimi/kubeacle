@@ -261,115 +261,6 @@ func (s *Server) handleGetClusterSummary(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, summary)
 }
 
-type exportRequest struct {
-	WorkloadIDs []string `json:"workload_ids"`
-}
-
-func (s *Server) handleExportYAML(w http.ResponseWriter, r *http.Request) {
-	var req exportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_BODY", "invalid JSON body")
-		return
-	}
-	if len(req.WorkloadIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_BODY", "workload_ids must not be empty")
-		return
-	}
-
-	analyzed, err := s.getAnalyzedWorkloads(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "ANALYSIS_ERROR", err.Error())
-		return
-	}
-
-	idSet := make(map[string]bool, len(req.WorkloadIDs))
-	for _, id := range req.WorkloadIDs {
-		idSet[id] = true
-	}
-
-	var patches []string
-	for _, wa := range analyzed {
-		if !idSet[wa.ID] {
-			continue
-		}
-		for _, c := range wa.Containers {
-			patches = append(patches, fmt.Sprintf("# %s / %s\n%s", wa.ID, c.Name, c.Recommended.YAMLPatch))
-		}
-	}
-
-	if len(patches) == 0 {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "no matching workloads found")
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/yaml")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, strings.Join(patches, "\n---\n"))
-}
-
-func (s *Server) handleExportHelm(w http.ResponseWriter, r *http.Request) {
-	var req exportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_BODY", "invalid JSON body")
-		return
-	}
-	if len(req.WorkloadIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_BODY", "workload_ids must not be empty")
-		return
-	}
-
-	analyzed, err := s.getAnalyzedWorkloads(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "ANALYSIS_ERROR", err.Error())
-		return
-	}
-
-	idSet := make(map[string]bool, len(req.WorkloadIDs))
-	for _, id := range req.WorkloadIDs {
-		idSet[id] = true
-	}
-
-	type helmResources struct {
-		Requests map[string]string `json:"requests"`
-		Limits   map[string]string `json:"limits"`
-	}
-	type helmContainer struct {
-		Resources helmResources `json:"resources"`
-	}
-
-	helmValues := make(map[string]map[string]helmContainer)
-	found := false
-	for _, wa := range analyzed {
-		if !idSet[wa.ID] {
-			continue
-		}
-		found = true
-		containers := make(map[string]helmContainer)
-		for _, c := range wa.Containers {
-			containers[c.Name] = helmContainer{
-				Resources: helmResources{
-					Requests: map[string]string{
-						"cpu":    fmt.Sprintf("%dm", int(c.Recommended.Request.CPUCores*1000)),
-						"memory": fmt.Sprintf("%dMi", int(c.Recommended.Request.MemoryGiB*1024)),
-					},
-					Limits: map[string]string{
-						"cpu":    fmt.Sprintf("%dm", int(c.Recommended.Limit.CPUCores*1000)),
-						"memory": fmt.Sprintf("%dMi", int(c.Recommended.Limit.MemoryGiB*1024)),
-					},
-				},
-			}
-		}
-		helmValues[wa.Name] = containers
-	}
-
-	if !found {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "no matching workloads found")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, helmValues)
-}
-
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	sanitized := struct {
 		PrometheusURL     string        `json:"prometheus_url"`
@@ -398,10 +289,10 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type configUpdate struct {
-	HeadroomFactor  *float64  `json:"headroom_factor"`
-	SpikePercentile *string   `json:"spike_percentile"`
-	CostPerCPUHour  *float64  `json:"cost_per_cpu_hour"`
-	CostPerGiBHour  *float64  `json:"cost_per_gib_hour"`
+	HeadroomFactor    *float64 `json:"headroom_factor"`
+	SpikePercentile   *string  `json:"spike_percentile"`
+	CostPerCPUHour    *float64 `json:"cost_per_cpu_hour"`
+	CostPerGiBHour    *float64 `json:"cost_per_gib_hour"`
 	ExcludeNamespaces []string `json:"exclude_namespaces"`
 }
 

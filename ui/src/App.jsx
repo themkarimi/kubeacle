@@ -684,11 +684,9 @@ function pcStyle() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // RECOMMENDATIONS VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
-function Recommendations({ workloads, loading, onSelect, toast }) {
+function Recommendations({ workloads, loading, onSelect }) {
   const [nsFilter, setNsFilter] = useState('')
   const [riskFilter, setRiskFilter] = useState('')
-  const [selected, setSelected] = useState(new Set())
-  const [exporting, setExporting] = useState(false)
 
   if (loading) return <LoadingView />
 
@@ -706,70 +704,9 @@ function Recommendations({ workloads, loading, onSelect, toast }) {
     grouped[r].push(w)
   })
 
-  const toggleSelect = (id, e) => {
-    e.stopPropagation()
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const visibleIds = new Set(wl.map(w => w.id))
-  const allVisibleSelected = wl.length > 0 && wl.every(w => selected.has(w.id))
-
-  const selectAll = () => {
-    if (allVisibleSelected) {
-      setSelected(prev => {
-        const next = new Set(prev)
-        visibleIds.forEach(id => next.delete(id))
-        return next
-      })
-    } else {
-      setSelected(prev => {
-        const next = new Set(prev)
-        visibleIds.forEach(id => next.add(id))
-        return next
-      })
-    }
-  }
-
-  const exportData = async (format) => {
-    if (selected.size === 0) {
-      toast('Select workloads to export', 'error')
-      return
-    }
-    setExporting(true)
-    try {
-      const endpoint = format === 'helm' ? '/api/v1/export/helm' : '/api/v1/export/yaml'
-      const res = await fetch(API_BASE + endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workload_ids: [...selected] }),
-      })
-      if (!res.ok) throw new Error(`Export failed: ${res.status}`)
-
-      if (format === 'helm') {
-        const data = await res.json()
-        const text = JSON.stringify(data, null, 2)
-        copyToClipboard(text)
-        toast('Helm values copied to clipboard', 'success')
-      } else {
-        const text = await res.text()
-        copyToClipboard(text)
-        toast('YAML patches copied to clipboard', 'success')
-      }
-    } catch {
-      toast('Export failed', 'error')
-    } finally {
-      setExporting(false)
-    }
-  }
-
   return (
     <div>
-      {/* Filters and Export */}
+      {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={nsFilter} onChange={e => setNsFilter(e.target.value)} style={selectStyle()}>
           <option value="">All Namespaces</option>
@@ -779,18 +716,6 @@ function Recommendations({ workloads, loading, onSelect, toast }) {
           <option value="">All Risks</option>
           {riskOrder.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
-        <div style={{ flex: 1 }} />
-        <button onClick={selectAll} style={btnStyle()}>
-          {allVisibleSelected ? 'Deselect All' : 'Select All'}
-        </button>
-        <button onClick={() => exportData('yaml')} disabled={exporting || selected.size === 0}
-          style={{ ...btnStyle(C.cyan), opacity: selected.size === 0 ? 0.4 : 1 }}>
-          {exporting ? 'Exporting…' : `Export YAML (${selected.size})`}
-        </button>
-        <button onClick={() => exportData('helm')} disabled={exporting || selected.size === 0}
-          style={{ ...btnStyle(C.purple), opacity: selected.size === 0 ? 0.4 : 1 }}>
-          {exporting ? 'Exporting…' : `Export Helm (${selected.size})`}
-        </button>
       </div>
 
       {riskOrder.map(risk => {
@@ -808,26 +733,15 @@ function Recommendations({ workloads, loading, onSelect, toast }) {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
               {items.map((w, i) => {
-                const wId = w.id
-                const isSelected = selected.has(wId)
                 return (
                 <div key={w.name + w.namespace + i} onClick={() => onSelect(w)} style={{
-                  background: C.surface, border: `1px solid ${isSelected ? C.cyan : C.border}`, borderRadius: 8,
+                  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
                   padding: 16, cursor: 'pointer', transition: 'border-color .2s',
                 }}
-                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = RISK_COLORS[risk] }}
-                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = C.border }}>
+                onMouseEnter={e => { e.currentTarget.style.borderColor = RISK_COLORS[risk] }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div onClick={e => toggleSelect(wId, e)} style={{
-                        width: 18, height: 18, borderRadius: 4, flexShrink: 0,
-                        border: `2px solid ${isSelected ? C.cyan : C.muted}`,
-                        background: isSelected ? C.cyan + '33' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer', transition: 'all .15s',
-                      }}>
-                        {isSelected && <span style={{ color: C.cyan, fontSize: 12, fontWeight: 700 }}>✓</span>}
-                      </div>
                       <div>
                         <div style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: C.text }}>{w.name}</div>
                         <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginTop: 2 }}>{w.namespace}</div>
@@ -1110,7 +1024,7 @@ export default function App() {
       case 'detail':
         return <WorkloadDetail workload={selectedWorkload} onBack={handleBack} toast={toast} />
       case 'recommend':
-        return <Recommendations workloads={workloads} loading={loading} onSelect={handleSelectWorkload} toast={toast} />
+        return <Recommendations workloads={workloads} loading={loading} onSelect={handleSelectWorkload} />
       case 'settings':
         return <Settings toast={toast} />
       default:
