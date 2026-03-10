@@ -274,6 +274,62 @@ func TestGetConfig(t *testing.T) {
 	}
 }
 
+func TestUpdateConfig(t *testing.T) {
+	srv := testServer()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config",
+		strings.NewReader(`{"headroom_factor":0.05,"spike_percentile":"P99","cost_per_cpu_hour":0.041,"cost_per_gib_hour":0.009,"exclude_namespaces":["kube-system","monitoring"]}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	configRec := doGet(t, srv, "/api/v1/config")
+	if configRec.Code != http.StatusOK {
+		t.Fatalf("expected config 200, got %d", configRec.Code)
+	}
+
+	var cfg map[string]interface{}
+	if err := json.NewDecoder(configRec.Body).Decode(&cfg); err != nil {
+		t.Fatalf("failed to decode config response: %v", err)
+	}
+	if cfg["headroom_factor"] != 0.05 {
+		t.Errorf("expected headroom_factor 0.05, got %v", cfg["headroom_factor"])
+	}
+	if cfg["spike_percentile"] != "P99" {
+		t.Errorf("expected spike_percentile 'P99', got %v", cfg["spike_percentile"])
+	}
+	if cfg["cost_per_cpu_hour"] != 0.041 {
+		t.Errorf("expected cost_per_cpu_hour 0.041, got %v", cfg["cost_per_cpu_hour"])
+	}
+	if cfg["cost_per_gib_hour"] != 0.009 {
+		t.Errorf("expected cost_per_gib_hour 0.009, got %v", cfg["cost_per_gib_hour"])
+	}
+
+	exclusions, ok := cfg["exclude_namespaces"].([]interface{})
+	if !ok {
+		t.Fatalf("expected exclude_namespaces array, got %T", cfg["exclude_namespaces"])
+	}
+	if len(exclusions) != 2 || exclusions[0] != "kube-system" || exclusions[1] != "monitoring" {
+		t.Errorf("unexpected exclude_namespaces: %#v", exclusions)
+	}
+}
+
+func TestUpdateConfigRejectsInvalidHeadroom(t *testing.T) {
+	srv := testServer()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config",
+		strings.NewReader(`{"headroom_factor":5}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTestPrometheusEndpoint(t *testing.T) {
 	srv := testServer()
 

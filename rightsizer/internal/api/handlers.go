@@ -342,6 +342,11 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if update.HeadroomFactor != nil {
+		if *update.HeadroomFactor < 0 || *update.HeadroomFactor > 1 {
+			writeError(w, http.StatusBadRequest, "INVALID_VALUE",
+				"headroom_factor must be between 0 and 1")
+			return
+		}
 		s.cfg.HeadroomFactor = *update.HeadroomFactor
 	}
 	if update.SpikePercentile != nil {

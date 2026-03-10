@@ -1103,11 +1103,11 @@ function Settings({ toast }) {
   const [config, setConfig] = useState({
     prometheus_url: 'http://prometheus:9090',
     lookback_window: '7d',
-    headroom_factor: 15,
+    headroom_percent: 15,
     spike_percentile: 'P95',
-    cost_cpu_hour: 0.031611,
-    cost_gib_hour: 0.004237,
-    namespace_exclusions: 'kube-system,kube-public',
+    cost_per_cpu_hour: 0.031611,
+    cost_per_gib_hour: 0.004237,
+    exclude_namespaces: 'kube-system,kube-public',
     mock_mode: false,
   })
   const [testing, setTesting] = useState(false)
@@ -1116,7 +1116,17 @@ function Settings({ toast }) {
   useEffect(() => {
     apiFetch('/api/v1/config')
       .then(data => {
-        if (data) setConfig(prev => ({ ...prev, ...data }))
+        if (!data) return
+        setConfig(prev => ({
+          ...prev,
+          ...data,
+          headroom_percent: Math.round((data.headroom_factor ?? prev.headroom_percent / 100) * 100),
+          cost_per_cpu_hour: data.cost_per_cpu_hour ?? prev.cost_per_cpu_hour,
+          cost_per_gib_hour: data.cost_per_gib_hour ?? prev.cost_per_gib_hour,
+          exclude_namespaces: Array.isArray(data.exclude_namespaces)
+            ? data.exclude_namespaces.join(',')
+            : prev.exclude_namespaces,
+        }))
       })
       .catch(() => {})
   }, [])
@@ -1141,9 +1151,19 @@ function Settings({ toast }) {
   const saveConfig = async () => {
     setSaving(true)
     try {
+      const payload = {
+        headroom_factor: config.headroom_percent / 100,
+        spike_percentile: config.spike_percentile,
+        cost_per_cpu_hour: Number(config.cost_per_cpu_hour),
+        cost_per_gib_hour: Number(config.cost_per_gib_hour),
+        exclude_namespaces: config.exclude_namespaces
+          .split(',')
+          .map(ns => ns.trim())
+          .filter(Boolean),
+      }
       await apiFetch('/api/v1/config', {
         method: 'PUT',
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       })
       toast('Configuration saved', 'success')
     } catch {
@@ -1195,8 +1215,8 @@ function Settings({ toast }) {
       <div style={groupStyle}>
         <div style={{ fontFamily: FONT.head, fontSize: 14, fontWeight: 600, color: C.text }}>Analysis Parameters</div>
         <div>
-          <label style={labelStyle}>Headroom Factor: {config.headroom_factor}%</label>
-          <input type="range" min={5} max={50} value={config.headroom_factor} onChange={e => update('headroom_factor', Number(e.target.value))}
+          <label style={labelStyle}>Headroom Factor: {config.headroom_percent}%</label>
+          <input type="range" min={5} max={50} value={config.headroom_percent} onChange={e => update('headroom_percent', Number(e.target.value))}
             style={{ width: '100%', accentColor: C.cyan }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>
             <span>5%</span><span>50%</span>
@@ -1228,11 +1248,11 @@ function Settings({ toast }) {
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 200px' }}>
             <label style={labelStyle}>Cost per CPU Hour ($)</label>
-            <input type="number" step="0.001" value={config.cost_cpu_hour} onChange={e => update('cost_cpu_hour', Number(e.target.value))} style={inputStyle} />
+            <input type="number" step="0.001" value={config.cost_per_cpu_hour} onChange={e => update('cost_per_cpu_hour', Number(e.target.value))} style={inputStyle} />
           </div>
           <div style={{ flex: '1 1 200px' }}>
             <label style={labelStyle}>Cost per GiB Hour ($)</label>
-            <input type="number" step="0.001" value={config.cost_gib_hour} onChange={e => update('cost_gib_hour', Number(e.target.value))} style={inputStyle} />
+            <input type="number" step="0.001" value={config.cost_per_gib_hour} onChange={e => update('cost_per_gib_hour', Number(e.target.value))} style={inputStyle} />
           </div>
         </div>
       </div>
@@ -1242,7 +1262,7 @@ function Settings({ toast }) {
         <div style={{ fontFamily: FONT.head, fontSize: 14, fontWeight: 600, color: C.text }}>Filters</div>
         <div>
           <label style={labelStyle}>Namespace Exclusions (comma separated)</label>
-          <input style={inputStyle} value={config.namespace_exclusions} onChange={e => update('namespace_exclusions', e.target.value)} placeholder="kube-system, kube-public" />
+          <input style={inputStyle} value={config.exclude_namespaces} onChange={e => update('exclude_namespaces', e.target.value)} placeholder="kube-system, kube-public" />
         </div>
         <div>
           <label style={labelStyle}>Mock Mode</label>
