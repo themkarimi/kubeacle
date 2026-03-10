@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,5 +200,108 @@ func TestGetConfig(t *testing.T) {
 	}
 	if cfg["spike_percentile"] != "P95" {
 		t.Errorf("expected spike_percentile 'P95', got %v", cfg["spike_percentile"])
+	}
+}
+
+func TestTestPrometheusEndpoint(t *testing.T) {
+	srv := testServer()
+
+	// Test with empty body
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/test-prometheus",
+		strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty url, got %d", rec.Code)
+	}
+
+	// Test with invalid URL (connection refused)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/test-prometheus",
+		strings.NewReader(`{"url":"http://localhost:19999"}`))
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 for unreachable prometheus, got %d", rec.Code)
+	}
+
+	// Test with invalid JSON
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/test-prometheus",
+		strings.NewReader(`not json`))
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}
+
+func TestNamespaceExclusion(t *testing.T) {
+	cfg := models.Config{
+		HeadroomFactor:    0.20,
+		SpikePercentile:   "P95",
+		CostPerCPUHour:    0.032,
+		CostPerGiBHour:    0.004,
+		MockMode:          true,
+		Port:              8080,
+		RefreshInterval:   5 * time.Minute,
+		ExcludeNamespaces: []string{"kube-system", "monitoring"},
+	}
+	srv := NewServer(cfg)
+
+	// Test namespaces endpoint excludes configured namespaces
+	rec := doGet(t, srv, "/api/v1/namespaces")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var namespaces []string
+	if err := json.NewDecoder(rec.Body).Decode(&namespaces); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	for _, ns := range namespaces {
+		if ns == "kube-system" || ns == "monitoring" {
+			t.Errorf("namespace %q should be excluded but was returned", ns)
+		}
+	}
+	if len(namespaces) == 0 {
+		t.Error("expected at least one namespace after exclusion")
+	}
+
+	// Test workloads endpoint excludes configured namespaces
+	rec = doGet(t, srv, "/api/v1/workloads?page_size=100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp models.PaginatedResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	items, ok := resp.Data.([]interface{})
+	if !ok {
+		t.Fatal("expected Data to be an array")
+	}
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if ns, ok := m["namespace"].(string); ok {
+			if ns == "kube-system" || ns == "monitoring" {
+				t.Errorf("workload in excluded namespace %q should not appear", ns)
+			}
+		}
+	}
+
+	// Test cluster summary doesn't include excluded namespaces
+	rec = doGet(t, srv, "/api/v1/cluster/summary")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var summary models.ClusterSummary
+	if err := json.NewDecoder(rec.Body).Decode(&summary); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	for _, nsSummary := range summary.NamespaceSummaries {
+		if nsSummary.Namespace == "kube-system" || nsSummary.Namespace == "monitoring" {
+			t.Errorf("excluded namespace %q should not appear in summary", nsSummary.Namespace)
+		}
 	}
 }
