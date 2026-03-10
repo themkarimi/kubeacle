@@ -16,13 +16,6 @@ services:
       - SPIKE_PERCENTILE=P95
       - COST_PER_CPU_HOUR=0.031611
       - COST_PER_GIB_HOUR=0.004237
-    # Note: distroless base image has no shell utilities, so healthcheck
-    # must use the binary itself or be handled by the orchestrator.
-    healthcheck:
-      test: ["CMD", "/rightsizer", "-health-check"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
   ui:
     build:
