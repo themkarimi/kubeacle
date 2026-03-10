@@ -1,0 +1,238 @@
+# Default values for kubeacle.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- String to partially override the release name. Appended to the chart name.
+nameOverride: ""
+# -- String to fully override the full name of the chart.
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created.
+  create: true
+  # -- Annotations to add to the service account.
+  annotations: {}
+  # -- The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template.
+  name: ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend (rightsizer Go server)
+# ─────────────────────────────────────────────────────────────────────────────
+backend:
+  # -- Enable or disable the backend component.
+  enabled: true
+
+  image:
+    # -- Backend container image repository.
+    repository: ghcr.io/themkarimi/kubeacle/rightsizer
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+    # -- Image tag. Defaults to the chart appVersion when left empty.
+    tag: ""
+
+  # -- Number of backend replicas.
+  replicaCount: 1
+
+  service:
+    # -- Kubernetes Service type for the backend.
+    type: ClusterIP
+    # -- Service port (must match config.port below).
+    port: 8080
+
+  # -- Rightsizer runtime configuration (all mapped to environment variables).
+  config:
+    # -- Run with deterministic mock data instead of querying Prometheus.
+    mockMode: "true"
+    # -- HTTP listen port inside the container.
+    port: "8080"
+    # -- Prometheus API URL.
+    prometheusUrl: "http://kubeacle-prometheus:9090"
+    # -- Historical analysis window (Go duration string, e.g. 168h = 7 days).
+    lookbackWindow: "168h"
+    # -- Safety headroom added to recommended values (0.20 = 20 %).
+    headroomFactor: "0.20"
+    # -- Percentile used as the spike baseline for limit calculations.
+    # Valid values: P90, P95, P99, Max
+    spikePercentile: "P95"
+    # -- Estimated cost per CPU-core per hour (USD).
+    costPerCpuHour: "0.031611"
+    # -- Estimated cost per GiB of memory per hour (USD).
+    costPerGibHour: "0.004237"
+    # -- Comma-separated list of namespaces to exclude from analysis.
+    excludeNamespaces: "kube-system"
+    # -- How often the in-memory analysis cache is refreshed (Go duration string).
+    refreshInterval: "5m"
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # -- Node selector for the backend pod.
+  nodeSelector: {}
+  # -- Tolerations for the backend pod.
+  tolerations: []
+  # -- Affinity rules for the backend pod.
+  affinity: {}
+  # -- Annotations to add to the backend pod.
+  podAnnotations: {}
+  # -- Security context for the backend pod.
+  podSecurityContext: {}
+  # -- Security context for the backend container.
+  securityContext:
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend (React + Nginx)
+# ─────────────────────────────────────────────────────────────────────────────
+frontend:
+  # -- Enable or disable the frontend component.
+  enabled: true
+
+  image:
+    # -- Frontend container image repository.
+    repository: ghcr.io/themkarimi/kubeacle/ui
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+    # -- Image tag. Defaults to the chart appVersion when left empty.
+    tag: ""
+
+  # -- Number of frontend replicas.
+  replicaCount: 1
+
+  service:
+    # -- Kubernetes Service type for the frontend.
+    type: ClusterIP
+    # -- Service port.
+    port: 80
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  # -- Node selector for the frontend pod.
+  nodeSelector: {}
+  # -- Tolerations for the frontend pod.
+  tolerations: []
+  # -- Affinity rules for the frontend pod.
+  affinity: {}
+  # -- Annotations to add to the frontend pod.
+  podAnnotations: {}
+  # -- Security context for the frontend pod.
+  podSecurityContext: {}
+  # -- Security context for the frontend container.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - NET_BIND_SERVICE
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prometheus (optional – can be replaced by an external instance)
+# ─────────────────────────────────────────────────────────────────────────────
+prometheus:
+  # -- Deploy a bundled Prometheus instance.
+  # Disable this and set backend.config.prometheusUrl to point at an
+  # existing Prometheus installation.
+  enabled: true
+
+  image:
+    # -- Prometheus container image repository.
+    repository: prom/prometheus
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+    # -- Prometheus image tag.
+    tag: "v3.2.1"
+
+  # -- Number of Prometheus replicas (usually 1).
+  replicaCount: 1
+
+  service:
+    # -- Kubernetes Service type for Prometheus.
+    type: ClusterIP
+    # -- Service port.
+    port: 9090
+
+  # -- TSDB retention period.
+  retention: "15d"
+  # -- How often Prometheus scrapes the backend metrics endpoint.
+  scrapeInterval: "30s"
+
+  persistence:
+    # -- Enable persistent storage for Prometheus TSDB.
+    enabled: false
+    # -- StorageClass name. Leave empty to use the cluster default.
+    storageClass: ""
+    # -- PVC access mode.
+    accessMode: ReadWriteOnce
+    # -- PVC size.
+    size: 10Gi
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # -- Node selector for the Prometheus pod.
+  nodeSelector: {}
+  # -- Tolerations for the Prometheus pod.
+  tolerations: []
+  # -- Affinity rules for the Prometheus pod.
+  affinity: {}
+  # -- Annotations to add to the Prometheus pod.
+  podAnnotations: {}
+  # -- Security context for the Prometheus pod.
+  podSecurityContext:
+    fsGroup: 65534
+  # -- Security context for the Prometheus container.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingress
+# ─────────────────────────────────────────────────────────────────────────────
+ingress:
+  # -- Enable an Ingress resource.
+  enabled: false
+  # -- Ingress class name (e.g. "nginx", "traefik").
+  className: ""
+  # -- Additional annotations for the Ingress resource.
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: kubeacle.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration for the Ingress.
+  tls: []
+  #  - secretName: kubeacle-tls
+  #    hosts:
+  #      - kubeacle.local
