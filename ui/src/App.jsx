@@ -72,16 +72,16 @@ function fmt(n, decimals = 1) {
   return n.toFixed(decimals)
 }
 
-function fmtCPU(millicores) {
-  if (millicores == null) return '—'
-  if (millicores >= 1000) return (millicores / 1000).toFixed(2) + ' cores'
-  return millicores + 'm'
+function fmtCPU(cores) {
+  if (cores == null) return '—'
+  if (cores >= 1) return cores.toFixed(2) + ' cores'
+  return (cores * 1000).toFixed(0) + 'm'
 }
 
-function fmtMem(mib) {
-  if (mib == null) return '—'
-  if (mib >= 1024) return (mib / 1024).toFixed(2) + ' GiB'
-  return mib + ' MiB'
+function fmtMem(gib) {
+  if (gib == null) return '—'
+  if (gib >= 1) return gib.toFixed(2) + ' GiB'
+  return (gib * 1024).toFixed(0) + ' MiB'
 }
 
 function fmtDollars(v) {
@@ -207,8 +207,8 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
   const totalWorkloads = summary?.total_workloads ?? workloads?.length ?? 0
   const totalContainers = summary?.total_containers ?? (workloads || []).reduce((s, w) => s + (w.containers?.length || 0), 0)
   const cpuWaste = summary?.cpu_waste_percent ?? 0
-  const memWaste = summary?.memory_waste_percent ?? 0
-  const estSavings = summary?.estimated_monthly_savings ?? 0
+  const memWaste = summary?.mem_waste_percent ?? 0
+  const estSavings = summary?.estimated_monthly_saving_usd ?? 0
 
   // Build ring chart data
   const cpuData = [
@@ -223,7 +223,7 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
   // Risk distribution
   const riskCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
   ;(workloads || []).forEach(w => {
-    const risk = w.risk_level || 'LOW'
+    const risk = w.overall_risk || 'LOW'
     if (riskCounts[risk] !== undefined) riskCounts[risk]++
   })
   const riskData = Object.entries(riskCounts).map(([name, value]) => ({ name, value }))
@@ -234,7 +234,7 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
     const ns = w.namespace || 'default'
     if (!nsMap[ns]) nsMap[ns] = { count: 0, waste: 0 }
     nsMap[ns].count++
-    nsMap[ns].waste += (w.waste_score || 0)
+    nsMap[ns].waste += (w.overall_waste_score || 0)
   })
   const nsHeat = Object.entries(nsMap).map(([name, d]) => ({
     name, count: d.count, avgWaste: d.count > 0 ? d.waste / d.count : 0,
@@ -242,7 +242,7 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
 
   // Recent recommendations
   const recentRecs = (workloads || [])
-    .filter(w => w.risk_level === 'CRITICAL' || w.risk_level === 'HIGH')
+    .filter(w => w.overall_risk === 'CRITICAL' || w.overall_risk === 'HIGH')
     .slice(0, 6)
 
   const RING_COLORS = [C.cyan, C.border]
@@ -348,7 +348,7 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
                   <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.text }}>{w.name}</span>
                   <span style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginLeft: 8 }}>{w.namespace}</span>
                 </div>
-                <Badge color={RISK_COLORS[w.risk_level]}>{w.risk_level}</Badge>
+                <Badge color={RISK_COLORS[w.overall_risk]}>{w.overall_risk}</Badge>
               </div>
             ))}
           </div>
@@ -364,7 +364,7 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
 function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
   const [nsFilter, setNsFilter] = useState('')
   const [riskFilter, setRiskFilter] = useState('')
-  const [sortCol, setSortCol] = useState('waste_score')
+  const [sortCol, setSortCol] = useState('overall_waste_score')
   const [sortDir, setSortDir] = useState('desc')
   const [search, setSearch] = useState('')
 
@@ -372,7 +372,7 @@ function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
 
   const list = (workloads || [])
     .filter(w => !nsFilter || w.namespace === nsFilter)
-    .filter(w => !riskFilter || w.risk_level === riskFilter)
+    .filter(w => !riskFilter || w.overall_risk === riskFilter)
     .filter(w => !search || w.name?.toLowerCase().includes(search.toLowerCase()) || w.namespace?.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
       let va = a[sortCol], vb = b[sortCol]
@@ -436,10 +436,10 @@ function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
               <th style={thStyle('kind')} onClick={() => handleSort('kind')}>Type {sortCol === 'kind' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
               <th style={thStyle('replicas')} onClick={() => handleSort('replicas')}>Replicas</th>
               <th style={thStyle('qos_class')} onClick={() => handleSort('qos_class')}>QoS</th>
-              <th style={thStyle('waste_score')} onClick={() => handleSort('waste_score')}>Waste Score {sortCol === 'waste_score' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
-              <th style={thStyle('risk_level')} onClick={() => handleSort('risk_level')}>Risk {sortCol === 'risk_level' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+              <th style={thStyle('overall_waste_score')} onClick={() => handleSort('overall_waste_score')}>Waste Score {sortCol === 'overall_waste_score' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+              <th style={thStyle('overall_risk')} onClick={() => handleSort('overall_risk')}>Risk {sortCol === 'overall_risk' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
               <th style={thStyle('containers')}>Containers</th>
-              <th style={thStyle('estimated_monthly_savings')} onClick={() => handleSort('estimated_monthly_savings')}>Est. Saving</th>
+              <th style={thStyle('estimated_monthly_saving_usd')} onClick={() => handleSort('estimated_monthly_saving_usd')}>Est. Saving</th>
             </tr>
           </thead>
           <tbody>
@@ -458,13 +458,13 @@ function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
                 <td style={tdStyle}><Badge color={w.qos_class === 'Guaranteed' ? C.green : w.qos_class === 'Burstable' ? C.amber : C.dim}>{w.qos_class || '—'}</Badge></td>
                 <td style={{ ...tdStyle, minWidth: 120 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <WasteBar value={w.waste_score} />
-                    <span style={{ fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{(w.waste_score || 0).toFixed(0)}%</span>
+                    <WasteBar value={w.overall_waste_score} />
+                    <span style={{ fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{(w.overall_waste_score || 0).toFixed(0)}%</span>
                   </div>
                 </td>
-                <td style={tdStyle}><Badge color={RISK_COLORS[w.risk_level] || C.dim}>{w.risk_level || '—'}</Badge></td>
+                <td style={tdStyle}><Badge color={RISK_COLORS[w.overall_risk] || C.dim}>{w.overall_risk || '—'}</Badge></td>
                 <td style={tdStyle}>{w.containers?.length ?? 0}</td>
-                <td style={{ ...tdStyle, color: C.green }}>{fmtDollars(w.estimated_monthly_savings)}</td>
+                <td style={{ ...tdStyle, color: C.green }}>{fmtDollars(w.estimated_monthly_saving_usd)}</td>
               </tr>
             ))}
           </tbody>
@@ -491,18 +491,22 @@ function WorkloadDetail({ workload, onBack, toast }) {
   const w = workload
   const containers = w.containers || []
 
-  const yamlPatch = w.yaml_patch || containers.map(c => {
+  // Collect YAML patches and kubectl commands from all containers
+  const yamlPatch = containers.map(c => {
     const rec = c.recommendation || {}
-    return `# ${c.name}\nresources:\n  requests:\n    cpu: "${rec.cpu_request || '?'}m"\n    memory: "${rec.memory_request || '?'}Mi"\n  limits:\n    cpu: "${rec.cpu_limit || '?'}m"\n    memory: "${rec.memory_limit || '?'}Mi"`
+    return rec.yaml_patch || `# ${c.name}\nresources:\n  requests:\n    cpu: "${(rec.request?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.request?.memory_gib || 0) * 1024).toFixed(0)}Mi"\n  limits:\n    cpu: "${(rec.limit?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.limit?.memory_gib || 0) * 1024).toFixed(0)}Mi"`
   }).join('\n---\n')
 
-  const resourceKind = (w.kind || 'deployment').toLowerCase()
-  const kubectlCmd = w.kubectl_command || `kubectl set resources ${resourceKind}/${w.name} -n ${w.namespace} ${containers.map(c => {
+  const kubectlCmd = containers.map(c => {
     const rec = c.recommendation || {}
-    return `-c ${c.name} --requests=cpu=${rec.cpu_request || '?'}m,memory=${rec.memory_request || '?'}Mi --limits=cpu=${rec.cpu_limit || '?'}m,memory=${rec.memory_limit || '?'}Mi`
-  }).join(' ')}`
+    return rec.kubectl_cmd || ''
+  }).filter(Boolean).join('\n') || `kubectl set resources ${(w.type || 'Deployment').toLowerCase()}/${w.name} -n ${w.namespace}`
 
-  const issues = w.issues || []
+  // Collect all issues from all containers
+  const allIssues = containers.flatMap(c => (c.issues || []).map(issue => ({ container: c.name, issue })))
+
+  // Compute total estimated savings from container recommendations
+  const totalSaving = containers.reduce((sum, c) => sum + ((c.recommendation?.estimated_monthly_saving_usd || 0) * (w.replicas || 1)), 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -516,26 +520,36 @@ function WorkloadDetail({ workload, onBack, toast }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ fontFamily: FONT.head, fontSize: 24, fontWeight: 700, color: C.text }}>{w.name}</div>
           <Badge color={C.cyan}>{w.namespace}</Badge>
-          <Badge color={C.dim}>{w.kind || 'Deployment'}</Badge>
+          <Badge color={C.dim}>{w.type || 'Deployment'}</Badge>
           <Badge color={C.green}>{w.replicas ?? '?'} replicas</Badge>
           <Badge color={w.qos_class === 'Guaranteed' ? C.green : w.qos_class === 'Burstable' ? C.amber : C.dim}>{w.qos_class || 'BestEffort'}</Badge>
-          <Badge color={RISK_COLORS[w.risk_level] || C.dim}>{w.risk_level || 'LOW'}</Badge>
+          <Badge color={RISK_COLORS[w.overall_risk] || C.dim}>{w.overall_risk || 'LOW'}</Badge>
         </div>
         <div style={{ fontFamily: FONT.mono, fontSize: 13, color: C.dim, marginTop: 8 }}>
-          Waste Score: <span style={{ color: w.waste_score > 70 ? C.red : w.waste_score > 40 ? C.amber : C.green, fontWeight: 700 }}>{(w.waste_score || 0).toFixed(1)}%</span>
-          {' · '}Estimated Savings: <span style={{ color: C.green, fontWeight: 700 }}>{fmtDollars(w.estimated_monthly_savings)}/mo</span>
+          Waste Score: <span style={{ color: w.overall_waste_score > 70 ? C.red : w.overall_waste_score > 40 ? C.amber : C.green, fontWeight: 700 }}>{(w.overall_waste_score || 0).toFixed(1)}%</span>
+          {' · '}Estimated Savings: <span style={{ color: C.green, fontWeight: 700 }}>{fmtDollars(totalSaving)}/mo</span>
         </div>
       </div>
 
       {/* Container Details */}
       {containers.map((c, ci) => {
-        const cur = c.current || {}
+        const curReq = c.current_request || {}
+        const curLim = c.current_limit || {}
         const rec = c.recommendation || {}
-        const usage = c.usage_percentiles || {}
+        const recReq = rec.request || {}
+        const recLim = rec.limit || {}
+        const usage = c.usage || {}
         return (
           <div key={ci} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
-            <div style={{ fontFamily: FONT.head, fontSize: 16, fontWeight: 600, color: C.cyan, marginBottom: 16 }}>
-              Container: {c.name}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ fontFamily: FONT.head, fontSize: 16, fontWeight: 600, color: C.cyan }}>
+                Container: {c.name}
+                <span style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginLeft: 12 }}>{c.image}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Badge color={RISK_COLORS[c.risk_level] || C.dim}>{c.risk_level || 'LOW'}</Badge>
+                <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim }}>Waste: {(c.waste_score || 0).toFixed(0)}%</span>
+              </div>
             </div>
 
             {/* Current vs Recommended */}
@@ -543,25 +557,25 @@ function WorkloadDetail({ workload, onBack, toast }) {
               <div style={{ flex: '1 1 280px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
                 <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Current</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <MetricCell label="CPU Request" value={fmtCPU(cur.cpu_request)} />
-                  <MetricCell label="CPU Limit" value={fmtCPU(cur.cpu_limit)} />
-                  <MetricCell label="Mem Request" value={fmtMem(cur.memory_request)} />
-                  <MetricCell label="Mem Limit" value={fmtMem(cur.memory_limit)} />
+                  <MetricCell label="CPU Request" value={fmtCPU(curReq.cpu_cores)} />
+                  <MetricCell label="CPU Limit" value={fmtCPU(curLim.cpu_cores)} />
+                  <MetricCell label="Mem Request" value={fmtMem(curReq.memory_gib)} />
+                  <MetricCell label="Mem Limit" value={fmtMem(curLim.memory_gib)} />
                 </div>
               </div>
               <div style={{ flex: '1 1 280px', background: C.bg, border: `1px solid ${C.cyan}44`, borderRadius: 8, padding: 16 }}>
                 <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.cyan, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Recommended</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <MetricCell label="CPU Request" value={fmtCPU(rec.cpu_request)} accent={C.cyan} />
-                  <MetricCell label="CPU Limit" value={fmtCPU(rec.cpu_limit)} accent={C.cyan} />
-                  <MetricCell label="Mem Request" value={fmtMem(rec.memory_request)} accent={C.cyan} />
-                  <MetricCell label="Mem Limit" value={fmtMem(rec.memory_limit)} accent={C.cyan} />
+                  <MetricCell label="CPU Request" value={fmtCPU(recReq.cpu_cores)} accent={C.cyan} />
+                  <MetricCell label="CPU Limit" value={fmtCPU(recLim.cpu_cores)} accent={C.cyan} />
+                  <MetricCell label="Mem Request" value={fmtMem(recReq.memory_gib)} accent={C.cyan} />
+                  <MetricCell label="Mem Limit" value={fmtMem(recLim.memory_gib)} accent={C.cyan} />
                 </div>
               </div>
             </div>
 
             {/* Usage Percentiles */}
-            {(usage.cpu || usage.memory) && (
+            {usage.p50 && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Usage Percentiles</div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -576,26 +590,22 @@ function WorkloadDetail({ workload, onBack, toast }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {usage.cpu && (
-                      <tr>
-                        <td style={pcStyle()}>CPU</td>
-                        <td style={pcStyle()}>{fmtCPU(usage.cpu.p50)}</td>
-                        <td style={pcStyle()}>{fmtCPU(usage.cpu.p90)}</td>
-                        <td style={pcStyle()}>{fmtCPU(usage.cpu.p95)}</td>
-                        <td style={pcStyle()}>{fmtCPU(usage.cpu.p99)}</td>
-                        <td style={pcStyle()}>{fmtCPU(usage.cpu.max)}</td>
-                      </tr>
-                    )}
-                    {usage.memory && (
-                      <tr>
-                        <td style={pcStyle()}>Memory</td>
-                        <td style={pcStyle()}>{fmtMem(usage.memory.p50)}</td>
-                        <td style={pcStyle()}>{fmtMem(usage.memory.p90)}</td>
-                        <td style={pcStyle()}>{fmtMem(usage.memory.p95)}</td>
-                        <td style={pcStyle()}>{fmtMem(usage.memory.p99)}</td>
-                        <td style={pcStyle()}>{fmtMem(usage.memory.max)}</td>
-                      </tr>
-                    )}
+                    <tr>
+                      <td style={pcStyle()}>CPU</td>
+                      <td style={pcStyle()}>{fmtCPU(usage.p50?.cpu_cores)}</td>
+                      <td style={pcStyle()}>{fmtCPU(usage.p90?.cpu_cores)}</td>
+                      <td style={pcStyle()}>{fmtCPU(usage.p95?.cpu_cores)}</td>
+                      <td style={pcStyle()}>{fmtCPU(usage.p99?.cpu_cores)}</td>
+                      <td style={pcStyle()}>{fmtCPU(usage.max?.cpu_cores)}</td>
+                    </tr>
+                    <tr>
+                      <td style={pcStyle()}>Memory</td>
+                      <td style={pcStyle()}>{fmtMem(usage.p50?.memory_gib)}</td>
+                      <td style={pcStyle()}>{fmtMem(usage.p90?.memory_gib)}</td>
+                      <td style={pcStyle()}>{fmtMem(usage.p95?.memory_gib)}</td>
+                      <td style={pcStyle()}>{fmtMem(usage.p99?.memory_gib)}</td>
+                      <td style={pcStyle()}>{fmtMem(usage.max?.memory_gib)}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -631,21 +641,20 @@ function WorkloadDetail({ workload, onBack, toast }) {
       </div>
 
       {/* Issues */}
-      {issues.length > 0 && (
+      {allIssues.length > 0 && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
           <div style={{ fontFamily: FONT.head, fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 16 }}>Issues</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {issues.map((issue, ii) => (
+            {allIssues.map((item, ii) => (
               <div key={ii} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
                 background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
               }}>
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                  background: issue.severity === 'critical' ? C.red : issue.severity === 'high' ? C.amber : issue.severity === 'medium' ? C.purple : C.dim,
+                  background: item.issue.includes('oom') || item.issue.includes('under') ? C.red : item.issue.includes('no_limits') ? C.amber : C.dim,
                 }} />
-                <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.text }}>{issue.message || issue.description || issue}</span>
-                {issue.severity && <Badge color={RISK_COLORS[issue.severity?.toUpperCase()] || C.dim}>{issue.severity}</Badge>}
+                <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.text }}>{item.container}: {item.issue}</span>
               </div>
             ))}
           </div>
@@ -683,14 +692,14 @@ function Recommendations({ workloads, loading, onSelect }) {
 
   const wl = (workloads || [])
     .filter(w => !nsFilter || w.namespace === nsFilter)
-    .filter(w => !riskFilter || w.risk_level === riskFilter)
+    .filter(w => !riskFilter || w.overall_risk === riskFilter)
 
   const uniqueNs = [...new Set((workloads || []).map(w => w.namespace).filter(Boolean))].sort()
   const riskOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
   const grouped = {}
   riskOrder.forEach(r => { grouped[r] = [] })
   wl.forEach(w => {
-    const r = w.risk_level || 'LOW'
+    const r = w.overall_risk || 'LOW'
     if (!grouped[r]) grouped[r] = []
     grouped[r].push(w)
   })
@@ -740,14 +749,14 @@ function Recommendations({ workloads, loading, onSelect }) {
                   <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
                     <div>
                       <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>WASTE</div>
-                      <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: RISK_COLORS[risk] }}>{(w.waste_score || 0).toFixed(0)}%</div>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: RISK_COLORS[risk] }}>{(w.overall_waste_score || 0).toFixed(0)}%</div>
                     </div>
                     <div>
                       <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>SAVINGS</div>
-                      <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: C.green }}>{fmtDollars(w.estimated_monthly_savings)}</div>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: C.green }}>{fmtDollars(w.estimated_monthly_saving_usd)}</div>
                     </div>
                   </div>
-                  <WasteBar value={w.waste_score} />
+                  <WasteBar value={w.overall_waste_score} />
                   {(w.issues || []).length > 0 && (
                     <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {(w.issues || []).slice(0, 3).map((iss, ii) => (
@@ -964,11 +973,14 @@ export default function App() {
     try {
       const [summaryRes, workloadsRes, nsRes] = await Promise.allSettled([
         apiFetch('/api/v1/cluster/summary'),
-        apiFetch('/api/v1/workloads'),
+        apiFetch('/api/v1/workloads?page_size=100'),
         apiFetch('/api/v1/namespaces'),
       ])
       if (summaryRes.status === 'fulfilled') setSummary(summaryRes.value)
-      if (workloadsRes.status === 'fulfilled') setWorkloads(Array.isArray(workloadsRes.value) ? workloadsRes.value : workloadsRes.value?.workloads || [])
+      if (workloadsRes.status === 'fulfilled') {
+        const val = workloadsRes.value
+        setWorkloads(Array.isArray(val) ? val : val?.data || val?.workloads || [])
+      }
       if (nsRes.status === 'fulfilled') setNamespaces(Array.isArray(nsRes.value) ? nsRes.value : nsRes.value?.namespaces || [])
       setError(null)
     } catch (err) {
@@ -984,8 +996,13 @@ export default function App() {
     return () => clearInterval(refreshRef.current)
   }, [fetchData])
 
-  const handleSelectWorkload = (w) => {
-    setSelectedWorkload(w)
+  const handleSelectWorkload = async (w) => {
+    try {
+      const analysis = await apiFetch(`/api/v1/workloads/${encodeURIComponent(w.namespace)}/${encodeURIComponent(w.name)}/analysis`)
+      setSelectedWorkload(analysis)
+    } catch {
+      setSelectedWorkload(w)
+    }
     setView('detail')
   }
 
