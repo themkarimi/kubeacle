@@ -1,0 +1,27 @@
+1. Get the Kubeacle dashboard URL:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else if eq .Values.frontend.service.type "NodePort" }}
+  export NODE_PORT=$(kubectl get svc {{ include "kubeacle.frontend.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.ports[0].nodePort}')
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+  echo "Dashboard: http://$NODE_IP:$NODE_PORT"
+{{- else if eq .Values.frontend.service.type "LoadBalancer" }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  export SERVICE_IP=$(kubectl get svc {{ include "kubeacle.frontend.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "Dashboard: http://$SERVICE_IP"
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kubeacle.frontend.fullname" . }} 8080:80
+  echo "Dashboard: http://127.0.0.1:8080"
+{{- end }}
+
+2. Backend API health check:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kubeacle.backend.fullname" . }} 8081:{{ .Values.backend.service.port }}
+  curl http://127.0.0.1:8081/health
+
+3. Configuration:
+  - Mock mode:    {{ .Values.backend.config.mockMode }}
+  - Prometheus:   {{ .Values.backend.config.prometheusUrl }}
+  - Lookback:     {{ .Values.backend.config.lookbackWindow }}
+  - Headroom:     {{ .Values.backend.config.headroomFactor }}

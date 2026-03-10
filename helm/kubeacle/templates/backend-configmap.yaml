@@ -1,0 +1,20 @@
+{{- if .Values.backend.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubeacle.backend.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "kubeacle.backend.labels" . | nindent 4 }}
+data:
+  MOCK_MODE: {{ .Values.backend.config.mockMode | quote }}
+  PORT: {{ .Values.backend.config.port | quote }}
+  PROMETHEUS_URL: {{ .Values.backend.config.prometheusUrl | quote }}
+  LOOKBACK_WINDOW: {{ .Values.backend.config.lookbackWindow | quote }}
+  HEADROOM_FACTOR: {{ .Values.backend.config.headroomFactor | quote }}
+  SPIKE_PERCENTILE: {{ .Values.backend.config.spikePercentile | quote }}
+  COST_PER_CPU_HOUR: {{ .Values.backend.config.costPerCpuHour | quote }}
+  COST_PER_GIB_HOUR: {{ .Values.backend.config.costPerGibHour | quote }}
+  EXCLUDE_NAMESPACES: {{ .Values.backend.config.excludeNamespaces | quote }}
+  REFRESH_INTERVAL: {{ .Values.backend.config.refreshInterval | quote }}
+{{- end }}

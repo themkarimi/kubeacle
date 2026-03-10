@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kubeacle
+description: A Helm chart for Kubeacle – a Kubernetes workload rightsizing and cost-optimisation dashboard.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - rightsizing
+  - cost-optimisation
+  - monitoring
+home: https://github.com/themkarimi/kubeacle
+sources:
+  - https://github.com/themkarimi/kubeacle
+maintainers:
+  - name: themkarimi
+    url: https://github.com/themkarimi/kubeacle
