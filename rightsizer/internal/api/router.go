@@ -67,6 +67,7 @@ func (s *Server) setupRouter() {
 		r.Post("/export/helm", s.handleExportHelm)
 		r.Get("/config", s.handleGetConfig)
 		r.Put("/config", s.handleUpdateConfig)
+		r.Post("/config/test-prometheus", s.handleTestPrometheus)
 		r.Get("/prometheus/health", s.handlePrometheusHealth)
 	})
 

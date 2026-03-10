@@ -15,6 +15,7 @@ import (
 
 	"github.com/themkarimi/kubeacle/rightsizer/internal/analyzer"
 	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
+	"github.com/themkarimi/kubeacle/rightsizer/internal/prometheus"
 )
 
 // AnalysisCache is a simple in-memory cache with TTL support.
@@ -121,7 +122,14 @@ func (s *Server) handleGetNamespaces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, namespaces)
+	var filtered []string
+	for _, ns := range namespaces {
+		if !s.isExcludedNamespace(ns) {
+			filtered = append(filtered, ns)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (s *Server) handleGetWorkloads(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +441,28 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+func (s *Server) handleTestPrometheus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", "invalid JSON body")
+		return
+	}
+	if req.URL == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", "url must not be empty")
+		return
+	}
+
+	testClient := prometheus.NewClient(req.URL, s.cfg.LookbackWindow)
+	if err := testClient.HealthCheck(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "PROMETHEUS_UNHEALTHY", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "url": req.URL})
+}
+
 func (s *Server) handlePrometheusHealth(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.MockMode {
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -479,6 +509,9 @@ func (s *Server) getAnalyzedWorkloads(ctx context.Context) ([]models.WorkloadAna
 
 	analyzed := make([]models.WorkloadAnalysis, 0, len(rawWorkloads))
 	for _, rw := range rawWorkloads {
+		if s.isExcludedNamespace(rw.Namespace) {
+			continue
+		}
 		analyzed = append(analyzed, s.engine.AnalyzeWorkload(rw))
 	}
 
@@ -493,4 +526,14 @@ func totalSaving(wa models.WorkloadAnalysis) float64 {
 		total += c.Recommended.EstimatedSaving
 	}
 	return total
+}
+
+// isExcludedNamespace checks if a namespace is in the exclusion list.
+func (s *Server) isExcludedNamespace(ns string) bool {
+	for _, excluded := range s.cfg.ExcludeNamespaces {
+		if strings.EqualFold(strings.TrimSpace(excluded), strings.TrimSpace(ns)) {
+			return true
+		}
+	}
+	return false
 }
