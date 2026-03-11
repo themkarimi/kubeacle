@@ -482,3 +482,207 @@ func (c *Client) LookbackWindow() string {
 	}
 	return fmt.Sprintf("%dh", hours)
 }
+
+// ── Range query types ────────────────────────────────────────────────────────
+
+type promRangeResponse struct {
+	Status string        `json:"status"`
+	Data   promRangeData `json:"data"`
+}
+
+type promRangeData struct {
+	ResultType string            `json:"resultType"`
+	Result     []promRangeSeries `json:"result"`
+}
+
+type promRangeSeries struct {
+	Metric map[string]string `json:"metric"`
+	Values [][]interface{}   `json:"values"`
+}
+
+// queryRange executes a PromQL range query against /api/v1/query_range.
+func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]promRangeSeries, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/query_range", nil)
+	if err != nil {
+		return nil, fmt.Errorf("building range request: %w", err)
+	}
+	q := req.URL.Query()
+	q.Set("query", query)
+	q.Set("start", strconv.FormatInt(start.Unix(), 10))
+	q.Set("end", strconv.FormatInt(end.Unix(), 10))
+	q.Set("step", fmt.Sprintf("%ds", int(step.Seconds())))
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing range query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading range response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("range query returned HTTP %d: %s", resp.StatusCode, body)
+	}
+
+	var result promRangeResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decoding range response: %w", err)
+	}
+	if result.Status != "success" {
+		return nil, fmt.Errorf("range query status: %s", result.Status)
+	}
+	return result.Data.Result, nil
+}
+
+// GetWorkloadMetrics queries Prometheus for time-series CPU and memory usage
+// for all containers in the given workload over the lookback window.
+func (c *Client) GetWorkloadMetrics(ctx context.Context, namespace, name string, lookback time.Duration) (*models.WorkloadMetrics, error) {
+	if lookback <= 0 {
+		lookback = c.lookback
+	}
+
+	step := 5 * time.Minute
+	end := time.Now().UTC()
+	start := end.Add(-lookback)
+
+	// We query CPU rate and memory usage, filtered by namespace.
+	// The workload-to-pod mapping is done via kube_pod_owner.
+	cpuQuery := fmt.Sprintf(
+		`rate(container_cpu_usage_seconds_total{namespace=%q,container!="",container!="POD"}[5m])`,
+		namespace,
+	)
+	memQuery := fmt.Sprintf(
+		`container_memory_working_set_bytes{namespace=%q,container!="",container!="POD"}`,
+		namespace,
+	)
+
+	type rangeResult struct {
+		series []promRangeSeries
+		err    error
+	}
+
+	var cpuRes, memRes rangeResult
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s, err := c.queryRange(ctx, cpuQuery, start, end, step)
+		cpuRes = rangeResult{s, err}
+	}()
+	go func() {
+		defer wg.Done()
+		s, err := c.queryRange(ctx, memQuery, start, end, step)
+		memRes = rangeResult{s, err}
+	}()
+	wg.Wait()
+
+	if cpuRes.err != nil {
+		return nil, fmt.Errorf("CPU range query: %w", cpuRes.err)
+	}
+	if memRes.err != nil {
+		return nil, fmt.Errorf("memory range query: %w", memRes.err)
+	}
+
+	// Build per-container time-series by matching on pod labels.
+	// For simplicity we aggregate across pods belonging to the same container name.
+	type tsKey struct {
+		container string
+		ts        int64
+	}
+	cpuMap := make(map[tsKey]float64)
+	memMap := make(map[tsKey]float64)
+	cpuCount := make(map[tsKey]int)
+	memCount := make(map[tsKey]int)
+	containerSet := make(map[string]bool)
+
+	for _, s := range cpuRes.series {
+		ctr := s.Metric["container"]
+		if ctr == "" {
+			continue
+		}
+		containerSet[ctr] = true
+		for _, v := range s.Values {
+			if len(v) < 2 {
+				continue
+			}
+			ts := int64(v[0].(float64))
+			val, _ := strconv.ParseFloat(v[1].(string), 64)
+			k := tsKey{ctr, ts}
+			cpuMap[k] += val
+			cpuCount[k]++
+		}
+	}
+	for _, s := range memRes.series {
+		ctr := s.Metric["container"]
+		if ctr == "" {
+			continue
+		}
+		containerSet[ctr] = true
+		for _, v := range s.Values {
+			if len(v) < 2 {
+				continue
+			}
+			ts := int64(v[0].(float64))
+			val, _ := strconv.ParseFloat(v[1].(string), 64)
+			k := tsKey{ctr, ts}
+			memMap[k] += val / bytesPerGiB
+			memCount[k]++
+		}
+	}
+
+	if len(containerSet) == 0 {
+		return nil, nil
+	}
+
+	// Collect all unique timestamps.
+	tsSet := make(map[int64]bool)
+	for k := range cpuMap {
+		tsSet[k.ts] = true
+	}
+	for k := range memMap {
+		tsSet[k.ts] = true
+	}
+	timestamps := make([]int64, 0, len(tsSet))
+	for ts := range tsSet {
+		timestamps = append(timestamps, ts)
+	}
+	sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
+
+	// Build container metrics.
+	var cms []models.ContainerMetrics
+	for ctr := range containerSet {
+		series := make([]models.TimeSeriesPoint, 0, len(timestamps))
+		for _, ts := range timestamps {
+			k := tsKey{ctr, ts}
+			cpu := cpuMap[k]
+			if n := cpuCount[k]; n > 1 {
+				cpu /= float64(n)
+			}
+			mem := memMap[k]
+			if n := memCount[k]; n > 1 {
+				mem /= float64(n)
+			}
+			series = append(series, models.TimeSeriesPoint{
+				Timestamp: time.Unix(ts, 0).UTC(),
+				CPUCores:  cpu,
+				MemoryGiB: mem,
+			})
+		}
+		cms = append(cms, models.ContainerMetrics{
+			Name:   ctr,
+			Series: series,
+		})
+	}
+	sort.Slice(cms, func(i, j int) bool { return cms[i].Name < cms[j].Name })
+
+	return &models.WorkloadMetrics{
+		Name:        name,
+		Namespace:   namespace,
+		Containers:  cms,
+		StepSeconds: int(step.Seconds()),
+	}, nil
+}

@@ -61,6 +61,7 @@ func (s *Server) setupRouter() {
 		r.Get("/namespaces", s.handleGetNamespaces)
 		r.Get("/workloads", s.handleGetWorkloads)
 		r.Get("/workloads/{namespace}/{name}/analysis", s.handleGetWorkloadAnalysis)
+		r.Get("/workloads/{namespace}/{name}/metrics", s.handleGetWorkloadMetrics)
 		r.Get("/recommendations", s.handleGetRecommendations)
 		r.Get("/cluster/summary", s.handleGetClusterSummary)
 		r.Get("/config", s.handleGetConfig)

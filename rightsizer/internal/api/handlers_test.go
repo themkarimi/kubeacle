@@ -180,6 +180,65 @@ func TestGetWorkloadAnalysis(t *testing.T) {
 	}
 }
 
+func TestGetWorkloadMetrics(t *testing.T) {
+	srv := testServer()
+
+	// Use a known workload from mock data: production/web-frontend
+	rec := doGet(t, srv, "/api/v1/workloads/production/web-frontend/metrics")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var metrics models.WorkloadMetrics
+	if err := json.NewDecoder(rec.Body).Decode(&metrics); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if metrics.Name != "web-frontend" {
+		t.Errorf("expected Name 'web-frontend', got %q", metrics.Name)
+	}
+	if metrics.Namespace != "production" {
+		t.Errorf("expected Namespace 'production', got %q", metrics.Namespace)
+	}
+	if len(metrics.Containers) == 0 {
+		t.Error("expected at least one container in metrics")
+	}
+	if metrics.StepSeconds <= 0 {
+		t.Errorf("expected positive StepSeconds, got %d", metrics.StepSeconds)
+	}
+
+	// Verify each container has time-series data
+	for _, cm := range metrics.Containers {
+		if cm.Name == "" {
+			t.Error("container metrics has empty name")
+		}
+		if len(cm.Series) == 0 {
+			t.Errorf("container %q has no time-series points", cm.Name)
+		}
+		// Verify data points have non-zero timestamps and values
+		for i, pt := range cm.Series {
+			if pt.Timestamp.IsZero() {
+				t.Errorf("container %q point %d has zero timestamp", cm.Name, i)
+			}
+			if pt.CPUCores <= 0 {
+				t.Errorf("container %q point %d has non-positive CPU: %f", cm.Name, i, pt.CPUCores)
+			}
+			if pt.MemoryGiB <= 0 {
+				t.Errorf("container %q point %d has non-positive memory: %f", cm.Name, i, pt.MemoryGiB)
+			}
+			if i > 0 {
+				break // Only check first two points for efficiency
+			}
+		}
+	}
+
+	// Test 404 for nonexistent workload
+	rec404 := doGet(t, srv, "/api/v1/workloads/default/nonexistent/metrics")
+	if rec404.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for nonexistent workload, got %d", rec404.Code)
+	}
+}
+
 func TestGetConfig(t *testing.T) {
 	srv := testServer()
 	rec := doGet(t, srv, "/api/v1/config")
