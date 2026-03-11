@@ -9,6 +9,38 @@ import (
 	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
 
+// Analysis-tuning constants.
+const (
+	// limitMultiplier is applied to Max usage when computing recommended limits.
+	limitMultiplier = 1.3
+	// limitRequestRatio is the minimum ratio of limit to request.
+	limitRequestRatio = 2.0
+	// containerConfidence is the default confidence score for container recommendations.
+	containerConfidence = 0.85
+	// volumeConfidence is the default confidence score for volume recommendations.
+	volumeConfidence = 0.72
+	// hoursPerMonth is the average number of hours in a month (365/12*24), used for cost estimation.
+	hoursPerMonth = 730
+	// minVolumeRequestGiB is the floor for recommended volume sizes.
+	minVolumeRequestGiB = 1.0
+)
+
+// Risk-threshold constants define the reduction-fraction boundaries for each risk level.
+const (
+	riskThresholdLow    = 0.20
+	riskThresholdMedium = 0.50
+	riskThresholdHigh   = 0.70
+)
+
+// Issue-detection thresholds.
+const (
+	overProvisionedWasteThreshold   = 50  // container waste score above which "over_provisioned" is flagged
+	oomRiskLimitFraction            = 0.9 // memory usage fraction of limit above which "oom_risk" is flagged
+	storageOverProvisionedThreshold = 35  // volume waste score above which "storage_over_provisioned" is flagged
+	storageUnderProvisionedFraction = 0.85
+	storageCapacityRiskFraction     = 0.95
+)
+
 // Engine performs rightsizing analysis on Kubernetes workloads.
 type Engine struct {
 	cfg models.Config
@@ -73,18 +105,23 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 		RiskDistribution: make(map[models.RiskLevel]int),
 	}
 
-	nsMap := make(map[string]*models.NamespaceSummary)
+	type nsAccum struct {
+		summary                            *models.NamespaceSummary
+		cpuReq, cpuUsed, memReq, memUsed   float64
+		storageReq, storageUsed            float64
+	}
+	nsMap := make(map[string]*nsAccum)
 
 	for _, w := range workloads {
 		summary.TotalWorkloads++
 		summary.RiskDistribution[w.OverallRisk]++
 
-		ns, ok := nsMap[w.Namespace]
+		acc, ok := nsMap[w.Namespace]
 		if !ok {
-			ns = &models.NamespaceSummary{Namespace: w.Namespace}
-			nsMap[w.Namespace] = ns
+			acc = &nsAccum{summary: &models.NamespaceSummary{Namespace: w.Namespace}}
+			nsMap[w.Namespace] = acc
 		}
-		ns.WorkloadCount++
+		acc.summary.WorkloadCount++
 
 		for _, c := range w.Containers {
 			summary.TotalContainers++
@@ -93,7 +130,12 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 			summary.CPUUsedCores += c.Usage.Average.CPUCores
 			summary.MemUsedGiB += c.Usage.Average.MemoryGiB
 			summary.EstimatedMonthlySave += c.Recommended.EstimatedSaving
-			ns.EstimatedSaving += c.Recommended.EstimatedSaving
+			acc.summary.EstimatedSaving += c.Recommended.EstimatedSaving
+
+			acc.cpuReq += c.CurrentRequest.CPUCores
+			acc.cpuUsed += c.Usage.Average.CPUCores
+			acc.memReq += c.CurrentRequest.MemoryGiB
+			acc.memUsed += c.Usage.Average.MemoryGiB
 		}
 
 		for _, volume := range w.PersistentVolumes {
@@ -101,6 +143,9 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 			summary.StorageRequestedGiB += volume.CurrentRequestGiB
 			summary.StorageUsedGiB += volume.Usage.AverageGiB
 			summary.EstimatedStorageReclaimGiB += volume.Recommended.ReclaimableGiB
+
+			acc.storageReq += volume.CurrentRequestGiB
+			acc.storageUsed += volume.Usage.AverageGiB
 		}
 	}
 
@@ -114,31 +159,16 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 		summary.StorageWastePercent = ((summary.StorageRequestedGiB - summary.StorageUsedGiB) / summary.StorageRequestedGiB) * 100
 	}
 
-	for _, ns := range nsMap {
-		var cpuReq, cpuUsed, memReq, memUsed, storageReq, storageUsed float64
-		for _, w := range workloads {
-			if w.Namespace != ns.Namespace {
-				continue
-			}
-			for _, c := range w.Containers {
-				cpuReq += c.CurrentRequest.CPUCores
-				cpuUsed += c.Usage.Average.CPUCores
-				memReq += c.CurrentRequest.MemoryGiB
-				memUsed += c.Usage.Average.MemoryGiB
-			}
-			for _, volume := range w.PersistentVolumes {
-				storageReq += volume.CurrentRequestGiB
-				storageUsed += volume.Usage.AverageGiB
-			}
+	for _, acc := range nsMap {
+		ns := acc.summary
+		if acc.cpuReq > 0 {
+			ns.CPUWastePercent = ((acc.cpuReq - acc.cpuUsed) / acc.cpuReq) * 100
 		}
-		if cpuReq > 0 {
-			ns.CPUWastePercent = ((cpuReq - cpuUsed) / cpuReq) * 100
+		if acc.memReq > 0 {
+			ns.MemWastePercent = ((acc.memReq - acc.memUsed) / acc.memReq) * 100
 		}
-		if memReq > 0 {
-			ns.MemWastePercent = ((memReq - memUsed) / memReq) * 100
-		}
-		if storageReq > 0 {
-			ns.StorageWastePercent = ((storageReq - storageUsed) / storageReq) * 100
+		if acc.storageReq > 0 {
+			ns.StorageWastePercent = ((acc.storageReq - acc.storageUsed) / acc.storageReq) * 100
 		}
 		summary.NamespaceSummaries = append(summary.NamespaceSummaries, *ns)
 	}
@@ -156,8 +186,8 @@ func (e *Engine) analyzeContainer(c models.RawContainer, w models.RawWorkload) m
 	}
 
 	recLimit := models.ResourceValues{
-		CPUCores:  math.Max(c.Usage.Max.CPUCores*1.3, recRequest.CPUCores*2),
-		MemoryGiB: math.Max(c.Usage.Max.MemoryGiB*1.3, recRequest.MemoryGiB*2),
+		CPUCores:  math.Max(c.Usage.Max.CPUCores*limitMultiplier, recRequest.CPUCores*limitRequestRatio),
+		MemoryGiB: math.Max(c.Usage.Max.MemoryGiB*limitMultiplier, recRequest.MemoryGiB*limitRequestRatio),
 	}
 
 	cpuWaste := wasteScore(c.CurrentRequest.CPUCores, recRequest.CPUCores)
@@ -168,10 +198,10 @@ func (e *Engine) analyzeContainer(c models.RawContainer, w models.RawWorkload) m
 
 	issues := detectIssues(c, avgWaste)
 
-	confidence := 0.85
+	confidence := containerConfidence
 
-	cpuSaving := (c.CurrentRequest.CPUCores - recRequest.CPUCores) * float64(w.Replicas) * e.cfg.CostPerCPUHour * 730
-	memSaving := (c.CurrentRequest.MemoryGiB - recRequest.MemoryGiB) * float64(w.Replicas) * e.cfg.CostPerGiBHour * 730
+	cpuSaving := (c.CurrentRequest.CPUCores - recRequest.CPUCores) * float64(w.Replicas) * e.cfg.CostPerCPUHour * hoursPerMonth
+	memSaving := (c.CurrentRequest.MemoryGiB - recRequest.MemoryGiB) * float64(w.Replicas) * e.cfg.CostPerGiBHour * hoursPerMonth
 	totalSaving := cpuSaving + memSaving
 	if totalSaving < 0 {
 		totalSaving = 0
@@ -206,10 +236,7 @@ func (e *Engine) analyzeContainer(c models.RawContainer, w models.RawWorkload) m
 func (e *Engine) analyzeVolume(volume models.RawPersistentVolume, w models.RawWorkload) models.PersistentVolumeAnalysis {
 	spikeGiB := volumeSpikeBaseline(volume.Usage, e.cfg.SpikePercentile)
 	headroom := e.cfg.HeadroomFactor
-	recommendedGiB := spikeGiB * (1 + headroom)
-	if recommendedGiB < 1 {
-		recommendedGiB = math.Max(recommendedGiB, 1)
-	}
+	recommendedGiB := math.Max(spikeGiB*(1+headroom), minVolumeRequestGiB)
 
 	waste := wasteScore(volume.CurrentRequestGiB, recommendedGiB)
 	risk := resourceRisk(volume.CurrentRequestGiB, recommendedGiB)
@@ -232,7 +259,7 @@ func (e *Engine) analyzeVolume(volume models.RawPersistentVolume, w models.RawWo
 		WasteScore:      waste,
 		RiskLevel:       risk,
 		Issues:          issues,
-		ConfidenceScore: 0.72,
+		ConfidenceScore: volumeConfidence,
 	}
 }
 
@@ -292,11 +319,11 @@ func resourceRisk(current, recommended float64) models.RiskLevel {
 	}
 	reduction := (current - recommended) / current
 	switch {
-	case reduction < 0.20:
+	case reduction < riskThresholdLow:
 		return models.Low
-	case reduction < 0.50:
+	case reduction < riskThresholdMedium:
 		return models.Medium
-	case reduction < 0.70:
+	case reduction < riskThresholdHigh:
 		return models.High
 	default:
 		return models.Critical
@@ -313,10 +340,10 @@ func detectIssues(c models.RawContainer, waste float64) []string {
 	if c.Usage.P95.CPUCores > c.CurrentRequest.CPUCores || c.Usage.P95.MemoryGiB > c.CurrentRequest.MemoryGiB {
 		issues = append(issues, "under_provisioned")
 	}
-	if waste > 50 {
+	if waste > overProvisionedWasteThreshold {
 		issues = append(issues, "over_provisioned")
 	}
-	if c.CurrentLimit.MemoryGiB > 0 && c.Usage.Max.MemoryGiB > c.CurrentLimit.MemoryGiB*0.9 {
+	if c.CurrentLimit.MemoryGiB > 0 && c.Usage.Max.MemoryGiB > c.CurrentLimit.MemoryGiB*oomRiskLimitFraction {
 		issues = append(issues, "oom_risk")
 	}
 
@@ -326,13 +353,13 @@ func detectIssues(c models.RawContainer, waste float64) []string {
 func detectVolumeIssues(volume models.RawPersistentVolume, waste float64) []string {
 	var issues []string
 
-	if waste > 35 {
+	if waste > storageOverProvisionedThreshold {
 		issues = append(issues, "storage_over_provisioned")
 	}
-	if volume.Usage.P95GiB > volume.CurrentRequestGiB*0.85 {
+	if volume.Usage.P95GiB > volume.CurrentRequestGiB*storageUnderProvisionedFraction {
 		issues = append(issues, "storage_under_provisioned")
 	}
-	if volume.Usage.MaxGiB > volume.CurrentRequestGiB*0.95 {
+	if volume.Usage.MaxGiB > volume.CurrentRequestGiB*storageCapacityRiskFraction {
 		issues = append(issues, "storage_capacity_risk")
 	}
 
@@ -340,13 +367,7 @@ func detectVolumeIssues(volume models.RawPersistentVolume, waste float64) []stri
 }
 
 func maxRisk(a, b models.RiskLevel) models.RiskLevel {
-	order := map[models.RiskLevel]int{
-		models.Low:      0,
-		models.Medium:   1,
-		models.High:     2,
-		models.Critical: 3,
-	}
-	if order[b] > order[a] {
+	if models.RiskOrder(b) > models.RiskOrder(a) {
 		return b
 	}
 	return a

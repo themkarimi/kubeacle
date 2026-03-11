@@ -26,6 +26,22 @@ const (
 	Critical RiskLevel = "CRITICAL"
 )
 
+// RiskOrder returns the numeric severity of a RiskLevel for comparison purposes.
+func RiskOrder(r RiskLevel) int {
+	switch r {
+	case Low:
+		return 0
+	case Medium:
+		return 1
+	case High:
+		return 2
+	case Critical:
+		return 3
+	default:
+		return 0
+	}
+}
+
 type ResourceValues struct {
 	CPUCores  float64 `json:"cpu_cores"`
 	MemoryGiB float64 `json:"memory_gib"`
