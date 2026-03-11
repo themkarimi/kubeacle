@@ -609,9 +609,16 @@ func (c *Client) GetWorkloadMetrics(ctx context.Context, namespace, name string,
 			if len(v) < 2 {
 				continue
 			}
-			ts := int64(v[0].(float64))
-			val, _ := strconv.ParseFloat(v[1].(string), 64)
-			k := tsKey{ctr, ts}
+			tsFloat, ok := v[0].(float64)
+			if !ok {
+				continue
+			}
+			valStr, ok := v[1].(string)
+			if !ok {
+				continue
+			}
+			val, _ := strconv.ParseFloat(valStr, 64)
+			k := tsKey{ctr, int64(tsFloat)}
 			cpuMap[k] += val
 			cpuCount[k]++
 		}
@@ -626,9 +633,16 @@ func (c *Client) GetWorkloadMetrics(ctx context.Context, namespace, name string,
 			if len(v) < 2 {
 				continue
 			}
-			ts := int64(v[0].(float64))
-			val, _ := strconv.ParseFloat(v[1].(string), 64)
-			k := tsKey{ctr, ts}
+			tsFloat, ok := v[0].(float64)
+			if !ok {
+				continue
+			}
+			valStr, ok := v[1].(string)
+			if !ok {
+				continue
+			}
+			val, _ := strconv.ParseFloat(valStr, 64)
+			k := tsKey{ctr, int64(tsFloat)}
 			memMap[k] += val / bytesPerGiB
 			memCount[k]++
 		}
