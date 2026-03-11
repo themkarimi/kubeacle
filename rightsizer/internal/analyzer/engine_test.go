@@ -44,6 +44,27 @@ func makeRawWorkload(cpuReq, memReq, cpuLim, memLim, usageFraction float64) mode
 	}
 }
 
+func makeRawWorkloadWithVolume(cpuReq, memReq, cpuLim, memLim, usageFraction, volumeReq, volumeUsageFraction float64) models.RawWorkload {
+	raw := makeRawWorkload(cpuReq, memReq, cpuLim, memLim, usageFraction)
+	baseVolume := volumeReq * volumeUsageFraction
+	raw.PersistentVolumes = []models.RawPersistentVolume{
+		{
+			Name:              "data-test-app-0",
+			StorageClass:      "gp3",
+			CurrentRequestGiB: volumeReq,
+			Usage: models.VolumeUsageStats{
+				AverageGiB: baseVolume,
+				P50GiB:     baseVolume * 0.95,
+				P90GiB:     baseVolume * 1.08,
+				P95GiB:     baseVolume * 1.15,
+				P99GiB:     baseVolume * 1.22,
+				MaxGiB:     baseVolume * 1.30,
+			},
+		},
+	}
+	return raw
+}
+
 func TestAnalyzeWorkload(t *testing.T) {
 	engine := NewEngine(defaultConfig())
 	raw := makeRawWorkload(1.0, 2.0, 2.0, 4.0, 0.30)
@@ -103,8 +124,8 @@ func TestComputeClusterSummary(t *testing.T) {
 	engine := NewEngine(defaultConfig())
 
 	raws := []models.RawWorkload{
-		makeRawWorkload(1.0, 2.0, 2.0, 4.0, 0.30),
-		makeRawWorkload(2.0, 4.0, 4.0, 8.0, 0.50),
+		makeRawWorkloadWithVolume(1.0, 2.0, 2.0, 4.0, 0.30, 200, 0.35),
+		makeRawWorkloadWithVolume(2.0, 4.0, 4.0, 8.0, 0.50, 120, 0.60),
 	}
 	raws[1].Namespace = "other"
 	raws[1].Name = "other-app"
@@ -134,11 +155,47 @@ func TestComputeClusterSummary(t *testing.T) {
 	if summary.MemUsedGiB <= 0 {
 		t.Error("expected positive MemUsedGiB")
 	}
+	if summary.TotalPersistentVolumes != 2 {
+		t.Errorf("expected 2 persistent volumes, got %d", summary.TotalPersistentVolumes)
+	}
+	if summary.StorageRequestedGiB <= 0 {
+		t.Error("expected positive StorageRequestedGiB")
+	}
+	if summary.StorageUsedGiB <= 0 {
+		t.Error("expected positive StorageUsedGiB")
+	}
 	if summary.RiskDistribution == nil {
 		t.Fatal("expected non-nil RiskDistribution")
 	}
 	if len(summary.NamespaceSummaries) != 2 {
 		t.Errorf("expected 2 namespace summaries, got %d", len(summary.NamespaceSummaries))
+	}
+}
+
+func TestAnalyzeWorkloadWithPersistentVolume(t *testing.T) {
+	engine := NewEngine(defaultConfig())
+	raw := makeRawWorkloadWithVolume(1.0, 2.0, 2.0, 4.0, 0.30, 300, 0.25)
+
+	result := engine.AnalyzeWorkload(raw)
+
+	if len(result.PersistentVolumes) != 1 {
+		t.Fatalf("expected 1 persistent volume, got %d", len(result.PersistentVolumes))
+	}
+	v := result.PersistentVolumes[0]
+	if v.Recommended.RequestGiB <= 0 {
+		t.Error("recommended volume request should be > 0")
+	}
+	if v.Recommended.ReclaimableGiB <= 0 {
+		t.Error("expected reclaimable GiB to be > 0")
+	}
+	if v.Recommended.YAMLPatch == "" {
+		t.Error("expected non-empty PVC YAMLPatch")
+	}
+	if v.Recommended.KubectlCmd == "" {
+		t.Error("expected non-empty PVC kubectl command")
+	}
+	if result.OverallStorageWaste <= 0 {
+		t.Error("expected positive overall storage waste")
 	}
 }
 

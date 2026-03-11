@@ -132,11 +132,20 @@ func TestGetClusterSummary(t *testing.T) {
 	if summary.TotalContainers == 0 {
 		t.Error("expected TotalContainers > 0")
 	}
+	if summary.TotalPersistentVolumes == 0 {
+		t.Error("expected TotalPersistentVolumes > 0")
+	}
 	if summary.CPURequestedCores <= 0 {
 		t.Error("expected CPURequestedCores > 0")
 	}
 	if summary.MemRequestedGiB <= 0 {
 		t.Error("expected MemRequestedGiB > 0")
+	}
+	if summary.StorageRequestedGiB <= 0 {
+		t.Error("expected StorageRequestedGiB > 0")
+	}
+	if summary.EstimatedStorageReclaimGiB <= 0 {
+		t.Error("expected EstimatedStorageReclaimGiB > 0")
 	}
 	if summary.RiskDistribution == nil {
 		t.Error("expected non-nil RiskDistribution")
@@ -149,8 +158,8 @@ func TestGetClusterSummary(t *testing.T) {
 func TestGetWorkloadAnalysis(t *testing.T) {
 	srv := testServer()
 
-	// Use a known workload from mock data: production/web-frontend
-	rec := doGet(t, srv, "/api/v1/workloads/production/web-frontend/analysis")
+	// Use a known workload from mock data with PVC analysis: production/postgres-primary
+	rec := doGet(t, srv, "/api/v1/workloads/production/postgres-primary/analysis")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
@@ -160,17 +169,20 @@ func TestGetWorkloadAnalysis(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&analysis); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if analysis.ID != "production/web-frontend" {
-		t.Errorf("expected ID 'production/web-frontend', got %q", analysis.ID)
+	if analysis.ID != "production/postgres-primary" {
+		t.Errorf("expected ID 'production/postgres-primary', got %q", analysis.ID)
 	}
-	if analysis.Name != "web-frontend" {
-		t.Errorf("expected Name 'web-frontend', got %q", analysis.Name)
+	if analysis.Name != "postgres-primary" {
+		t.Errorf("expected Name 'postgres-primary', got %q", analysis.Name)
 	}
 	if analysis.Namespace != "production" {
 		t.Errorf("expected Namespace 'production', got %q", analysis.Namespace)
 	}
 	if len(analysis.Containers) == 0 {
 		t.Error("expected at least one container in analysis")
+	}
+	if len(analysis.PersistentVolumes) == 0 {
+		t.Error("expected persistent volume analysis for mock workload")
 	}
 
 	// Test 404 for nonexistent workload

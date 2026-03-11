@@ -22,7 +22,9 @@ func NewEngine(cfg models.Config) *Engine {
 // AnalyzeWorkload analyzes a single workload and returns recommendations.
 func (e *Engine) AnalyzeWorkload(workload models.RawWorkload) models.WorkloadAnalysis {
 	containers := make([]models.ContainerAnalysis, 0, len(workload.Containers))
+	volumes := make([]models.PersistentVolumeAnalysis, 0, len(workload.PersistentVolumes))
 	var totalWaste float64
+	var totalStorageWaste float64
 	highestRisk := models.Low
 
 	for _, c := range workload.Containers {
@@ -32,22 +34,36 @@ func (e *Engine) AnalyzeWorkload(workload models.RawWorkload) models.WorkloadAna
 		highestRisk = maxRisk(highestRisk, ca.RiskLevel)
 	}
 
+	for _, volume := range workload.PersistentVolumes {
+		va := e.analyzeVolume(volume, workload)
+		volumes = append(volumes, va)
+		totalStorageWaste += va.WasteScore
+		highestRisk = maxRisk(highestRisk, va.RiskLevel)
+	}
+
 	overallWaste := 0.0
-	if len(containers) > 0 {
-		overallWaste = totalWaste / float64(len(containers))
+	if len(containers)+len(volumes) > 0 {
+		overallWaste = (totalWaste + totalStorageWaste) / float64(len(containers)+len(volumes))
+	}
+
+	overallStorageWaste := 0.0
+	if len(volumes) > 0 {
+		overallStorageWaste = totalStorageWaste / float64(len(volumes))
 	}
 
 	return models.WorkloadAnalysis{
-		ID:           workload.Namespace + "/" + workload.Name,
-		Name:         workload.Name,
-		Namespace:    workload.Namespace,
-		Type:         workload.Type,
-		Replicas:     workload.Replicas,
-		QoSClass:     determineQoS(containers),
-		Containers:   containers,
-		OverallWaste: overallWaste,
-		OverallRisk:  highestRisk,
-		LastAnalyzed: time.Now(),
+		ID:                  workload.Namespace + "/" + workload.Name,
+		Name:                workload.Name,
+		Namespace:           workload.Namespace,
+		Type:                workload.Type,
+		Replicas:            workload.Replicas,
+		QoSClass:            determineQoS(containers),
+		Containers:          containers,
+		PersistentVolumes:   volumes,
+		OverallWaste:        overallWaste,
+		OverallStorageWaste: overallStorageWaste,
+		OverallRisk:         highestRisk,
+		LastAnalyzed:        time.Now(),
 	}
 }
 
@@ -79,6 +95,13 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 			summary.EstimatedMonthlySave += c.Recommended.EstimatedSaving
 			ns.EstimatedSaving += c.Recommended.EstimatedSaving
 		}
+
+		for _, volume := range w.PersistentVolumes {
+			summary.TotalPersistentVolumes++
+			summary.StorageRequestedGiB += volume.CurrentRequestGiB
+			summary.StorageUsedGiB += volume.Usage.AverageGiB
+			summary.EstimatedStorageReclaimGiB += volume.Recommended.ReclaimableGiB
+		}
 	}
 
 	if summary.CPURequestedCores > 0 {
@@ -87,9 +110,12 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 	if summary.MemRequestedGiB > 0 {
 		summary.MemWastePercent = ((summary.MemRequestedGiB - summary.MemUsedGiB) / summary.MemRequestedGiB) * 100
 	}
+	if summary.StorageRequestedGiB > 0 {
+		summary.StorageWastePercent = ((summary.StorageRequestedGiB - summary.StorageUsedGiB) / summary.StorageRequestedGiB) * 100
+	}
 
 	for _, ns := range nsMap {
-		var cpuReq, cpuUsed, memReq, memUsed float64
+		var cpuReq, cpuUsed, memReq, memUsed, storageReq, storageUsed float64
 		for _, w := range workloads {
 			if w.Namespace != ns.Namespace {
 				continue
@@ -100,12 +126,19 @@ func (e *Engine) ComputeClusterSummary(workloads []models.WorkloadAnalysis) mode
 				memReq += c.CurrentRequest.MemoryGiB
 				memUsed += c.Usage.Average.MemoryGiB
 			}
+			for _, volume := range w.PersistentVolumes {
+				storageReq += volume.CurrentRequestGiB
+				storageUsed += volume.Usage.AverageGiB
+			}
 		}
 		if cpuReq > 0 {
 			ns.CPUWastePercent = ((cpuReq - cpuUsed) / cpuReq) * 100
 		}
 		if memReq > 0 {
 			ns.MemWastePercent = ((memReq - memUsed) / memReq) * 100
+		}
+		if storageReq > 0 {
+			ns.StorageWastePercent = ((storageReq - storageUsed) / storageReq) * 100
 		}
 		summary.NamespaceSummaries = append(summary.NamespaceSummaries, *ns)
 	}
@@ -170,6 +203,39 @@ func (e *Engine) analyzeContainer(c models.RawContainer, w models.RawWorkload) m
 	}
 }
 
+func (e *Engine) analyzeVolume(volume models.RawPersistentVolume, w models.RawWorkload) models.PersistentVolumeAnalysis {
+	spikeGiB := volumeSpikeBaseline(volume.Usage, e.cfg.SpikePercentile)
+	headroom := e.cfg.HeadroomFactor
+	recommendedGiB := spikeGiB * (1 + headroom)
+	if recommendedGiB < 1 {
+		recommendedGiB = math.Max(recommendedGiB, 1)
+	}
+
+	waste := wasteScore(volume.CurrentRequestGiB, recommendedGiB)
+	risk := resourceRisk(volume.CurrentRequestGiB, recommendedGiB)
+	reclaimableGiB := math.Max(volume.CurrentRequestGiB-recommendedGiB, 0)
+	issues := detectVolumeIssues(volume, waste)
+
+	return models.PersistentVolumeAnalysis{
+		Name:              volume.Name,
+		StorageClass:      volume.StorageClass,
+		CurrentRequestGiB: volume.CurrentRequestGiB,
+		Usage:             volume.Usage,
+		Recommended: models.VolumeRecommendation{
+			RequestGiB:     recommendedGiB,
+			HeadroomFactor: headroom,
+			ReclaimableGiB: reclaimableGiB,
+			Reasoning:      buildVolumeReasoning(volume, recommendedGiB, waste, risk),
+			YAMLPatch:      generatePVCYAMLPatch(volume.Name, recommendedGiB),
+			KubectlCmd:     generatePVCKubectlCmd(w, volume.Name, recommendedGiB),
+		},
+		WasteScore:      waste,
+		RiskLevel:       risk,
+		Issues:          issues,
+		ConfidenceScore: 0.72,
+	}
+}
+
 // spikeBaseline selects the appropriate percentile as the spike baseline.
 func spikeBaseline(usage models.UsageStats, percentile string) models.ResourceValues {
 	switch percentile {
@@ -183,6 +249,21 @@ func spikeBaseline(usage models.UsageStats, percentile string) models.ResourceVa
 		return usage.Max
 	default:
 		return usage.P95
+	}
+}
+
+func volumeSpikeBaseline(usage models.VolumeUsageStats, percentile string) float64 {
+	switch percentile {
+	case "P90":
+		return usage.P90GiB
+	case "P95":
+		return usage.P95GiB
+	case "P99":
+		return usage.P99GiB
+	case "Max":
+		return usage.MaxGiB
+	default:
+		return usage.P95GiB
 	}
 }
 
@@ -242,6 +323,22 @@ func detectIssues(c models.RawContainer, waste float64) []string {
 	return issues
 }
 
+func detectVolumeIssues(volume models.RawPersistentVolume, waste float64) []string {
+	var issues []string
+
+	if waste > 35 {
+		issues = append(issues, "storage_over_provisioned")
+	}
+	if volume.Usage.P95GiB > volume.CurrentRequestGiB*0.85 {
+		issues = append(issues, "storage_under_provisioned")
+	}
+	if volume.Usage.MaxGiB > volume.CurrentRequestGiB*0.95 {
+		issues = append(issues, "storage_capacity_risk")
+	}
+
+	return issues
+}
+
 func maxRisk(a, b models.RiskLevel) models.RiskLevel {
 	order := map[models.RiskLevel]int{
 		models.Low:      0,
@@ -294,6 +391,16 @@ func buildReasoning(c models.RawContainer, recReq, recLimit models.ResourceValue
 	return strings.Join(parts, "\n")
 }
 
+func buildVolumeReasoning(volume models.RawPersistentVolume, recommendedGiB, waste float64, risk models.RiskLevel) string {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("PersistentVolumeClaim %q analysis:", volume.Name))
+	parts = append(parts, fmt.Sprintf("  Storage: current request=%.2f GiB, recommended=%.2f GiB", volume.CurrentRequestGiB, recommendedGiB))
+	parts = append(parts, fmt.Sprintf("  Observed usage: avg=%.2f GiB, p95=%.2f GiB, max=%.2f GiB", volume.Usage.AverageGiB, volume.Usage.P95GiB, volume.Usage.MaxGiB))
+	parts = append(parts, fmt.Sprintf("  Waste score: %.1f%%, Risk level: %s", waste, risk))
+	parts = append(parts, "  Note: shrinking an existing PVC may require storage-class support or migration to a new claim.")
+	return strings.Join(parts, "\n")
+}
+
 func generateYAMLPatch(containerName string, req, limit models.ResourceValues) string {
 	return fmt.Sprintf(`containers:
 - name: %s
@@ -324,5 +431,25 @@ func generateKubectlCmd(w models.RawWorkload, containerName string, req, limit m
 		int(math.Ceil(limit.CPUCores*1000)),
 		int(math.Ceil(limit.MemoryGiB*1024)),
 		w.Namespace,
+	)
+}
+
+func generatePVCYAMLPatch(pvcName string, requestGiB float64) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s
+spec:
+  resources:
+    requests:
+      storage: "%dGi"`, pvcName, int(math.Ceil(requestGiB)))
+}
+
+func generatePVCKubectlCmd(w models.RawWorkload, pvcName string, requestGiB float64) string {
+	return fmt.Sprintf(
+		"kubectl patch pvc %s -n %s --type merge -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%dGi\"}}}}'",
+		pvcName,
+		w.Namespace,
+		int(math.Ceil(requestGiB)),
 	)
 }

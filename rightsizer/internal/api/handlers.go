@@ -156,17 +156,25 @@ func (s *Server) handleGetWorkloads(w http.ResponseWriter, r *http.Request) {
 			totalSaving += c.Recommended.EstimatedSaving
 		}
 
+		var totalStorageReclaim float64
+		for _, volume := range wa.PersistentVolumes {
+			totalStorageReclaim += volume.Recommended.ReclaimableGiB
+		}
+
 		summaries = append(summaries, models.WorkloadSummary{
-			ID:              wa.ID,
-			Name:            wa.Name,
-			Namespace:       wa.Namespace,
-			Type:            wa.Type,
-			Replicas:        wa.Replicas,
-			QoSClass:        wa.QoSClass,
-			OverallWaste:    wa.OverallWaste,
-			OverallRisk:     wa.OverallRisk,
-			Containers:      len(wa.Containers),
-			EstimatedSaving: totalSaving,
+			ID:                         wa.ID,
+			Name:                       wa.Name,
+			Namespace:                  wa.Namespace,
+			Type:                       wa.Type,
+			Replicas:                   wa.Replicas,
+			QoSClass:                   wa.QoSClass,
+			OverallWaste:               wa.OverallWaste,
+			OverallStorageWaste:        wa.OverallStorageWaste,
+			OverallRisk:                wa.OverallRisk,
+			Containers:                 len(wa.Containers),
+			PersistentVolumes:          len(wa.PersistentVolumes),
+			EstimatedSaving:            totalSaving,
+			EstimatedStorageReclaimGiB: totalStorageReclaim,
 		})
 	}
 

@@ -207,11 +207,21 @@ func (c *Client) GetAllWorkloads(ctx context.Context) ([]models.RawWorkload, err
 		"pod_to_rs":    `kube_pod_owner{owner_kind="ReplicaSet"}`,
 		"rs_to_dep":    `kube_replicaset_owner{owner_kind="Deployment"}`,
 		"pod_to_ss":    `kube_pod_owner{owner_kind="StatefulSet"}`,
+		"pod_to_pvc":   `kube_pod_spec_volumes_persistentvolumeclaims_info`,
 		"cpu_req":      `kube_pod_container_resource_requests{resource="cpu",container!=""}`,
 		"mem_req":      `kube_pod_container_resource_requests{resource="memory",container!=""}`,
 		"cpu_lim":      `kube_pod_container_resource_limits{resource="cpu",container!=""}`,
 		"mem_lim":      `kube_pod_container_resource_limits{resource="memory",container!=""}`,
 		"ctr_info":     `kube_pod_container_info{container!=""}`,
+		"pvc_req":      `kube_persistentvolumeclaim_resource_requests_storage_bytes`,
+		"pvc_info":     `kube_persistentvolumeclaim_info`,
+		"pvc_cap":      `kubelet_volume_stats_capacity_bytes`,
+		"pvc_avg":      fmt.Sprintf(`avg_over_time(kubelet_volume_stats_used_bytes[%s:5m])`, lb),
+		"pvc_p50":      fmt.Sprintf(`quantile_over_time(0.50,kubelet_volume_stats_used_bytes[%s:5m])`, lb),
+		"pvc_p90":      fmt.Sprintf(`quantile_over_time(0.90,kubelet_volume_stats_used_bytes[%s:5m])`, lb),
+		"pvc_p95":      fmt.Sprintf(`quantile_over_time(0.95,kubelet_volume_stats_used_bytes[%s:5m])`, lb),
+		"pvc_p99":      fmt.Sprintf(`quantile_over_time(0.99,kubelet_volume_stats_used_bytes[%s:5m])`, lb),
+		"pvc_max":      fmt.Sprintf(`max_over_time(kubelet_volume_stats_used_bytes[%s:5m])`, lb),
 		"cpu_avg":      fmt.Sprintf(`avg_over_time(rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m])[%s:5m])`, lb),
 		"cpu_p50":      fmt.Sprintf(`quantile_over_time(0.50,rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m])[%s:5m])`, lb),
 		"cpu_p90":      fmt.Sprintf(`quantile_over_time(0.90,rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m])[%s:5m])`, lb),
@@ -344,6 +354,91 @@ func (c *Client) GetAllWorkloads(ctx context.Context) ([]models.RawWorkload, err
 		}
 	}
 
+	volumeResultsAvailable := true
+	for _, name := range []string{"pod_to_pvc", "pvc_req", "pvc_info", "pvc_cap", "pvc_avg", "pvc_p50", "pvc_p90", "pvc_p95", "pvc_p99", "pvc_max"} {
+		if results[name].err != nil {
+			volumeResultsAvailable = false
+			break
+		}
+	}
+
+	type pvcKey struct{ ns, pvc string }
+	wlVolumes := make(map[nsStr][]models.RawPersistentVolume)
+	if volumeResultsAvailable {
+		pvcToWorkload := make(map[pvcKey]wlID)
+		for _, s := range results["pod_to_pvc"].samples {
+			ns, pod, pvc := s.Metric["namespace"], s.Metric["pod"], s.Metric["persistentvolumeclaim"]
+			if ns == "" || pod == "" || pvc == "" {
+				continue
+			}
+			if wl, ok := podToWorkload[podKey{ns, pod}]; ok {
+				pvcToWorkload[pvcKey{ns, pvc}] = wl
+			}
+		}
+
+		buildPVCGiB := func(name string) map[pvcKey]float64 {
+			m := make(map[pvcKey]float64, len(results[name].samples))
+			for _, s := range results[name].samples {
+				k := pvcKey{s.Metric["namespace"], s.Metric["persistentvolumeclaim"]}
+				if k.ns == "" || k.pvc == "" {
+					continue
+				}
+				m[k] = s.floatValue() / bytesPerGiB
+			}
+			return m
+		}
+
+		pvcReqM := buildPVCGiB("pvc_req")
+		pvcCapM := buildPVCGiB("pvc_cap")
+		pvcAvgM := buildPVCGiB("pvc_avg")
+		pvcP50M := buildPVCGiB("pvc_p50")
+		pvcP90M := buildPVCGiB("pvc_p90")
+		pvcP95M := buildPVCGiB("pvc_p95")
+		pvcP99M := buildPVCGiB("pvc_p99")
+		pvcMaxM := buildPVCGiB("pvc_max")
+
+		pvcClassM := make(map[pvcKey]string)
+		for _, s := range results["pvc_info"].samples {
+			k := pvcKey{s.Metric["namespace"], s.Metric["persistentvolumeclaim"]}
+			if k.ns == "" || k.pvc == "" {
+				continue
+			}
+			if storageClass := s.Metric["storageclass"]; storageClass != "" {
+				pvcClassM[k] = storageClass
+			}
+		}
+
+		for k, wl := range pvcToWorkload {
+			requestGiB := pvcReqM[k]
+			if requestGiB == 0 {
+				requestGiB = pvcCapM[k]
+			}
+			if requestGiB == 0 {
+				continue
+			}
+			workloadKey := nsStr{wl.ns, wl.name}
+			wlVolumes[workloadKey] = append(wlVolumes[workloadKey], models.RawPersistentVolume{
+				Name:              k.pvc,
+				StorageClass:      pvcClassM[k],
+				CurrentRequestGiB: requestGiB,
+				Usage: models.VolumeUsageStats{
+					AverageGiB: pvcAvgM[k],
+					P50GiB:     pvcP50M[k],
+					P90GiB:     pvcP90M[k],
+					P95GiB:     pvcP95M[k],
+					P99GiB:     pvcP99M[k],
+					MaxGiB:     pvcMaxM[k],
+				},
+			})
+		}
+
+		for wl := range wlVolumes {
+			sort.Slice(wlVolumes[wl], func(i, j int) bool {
+				return wlVolumes[wl][i].Name < wlVolumes[wl][j].Name
+			})
+		}
+	}
+
 	// ── Aggregate per-pod data per workload ──────────────────────────────────
 
 	type wcKey struct{ ns, workload, container string }
@@ -456,11 +551,12 @@ func (c *Client) GetAllWorkloads(ctx context.Context) ([]models.RawWorkload, err
 			continue
 		}
 		rawWorkloads = append(rawWorkloads, models.RawWorkload{
-			Name:       wl.name,
-			Namespace:  wl.ns,
-			Type:       wtype,
-			Replicas:   reps,
-			Containers: rawCtrs,
+			Name:              wl.name,
+			Namespace:         wl.ns,
+			Type:              wtype,
+			Replicas:          reps,
+			Containers:        rawCtrs,
+			PersistentVolumes: wlVolumes[wl],
 		})
 	}
 

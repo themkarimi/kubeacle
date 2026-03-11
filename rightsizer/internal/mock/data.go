@@ -25,26 +25,26 @@ var containerNames = []string{
 }
 
 var imageRegistry = map[string]string{
-	"nginx":           "nginx:1.25",
-	"api-server":      "company/api-server:3.12.1",
-	"redis":           "redis:7.2",
-	"postgres":        "postgres:16",
-	"worker":          "company/worker:2.8.0",
-	"sidecar-proxy":   "envoyproxy/envoy:v1.28",
+	"nginx":            "nginx:1.25",
+	"api-server":       "company/api-server:3.12.1",
+	"redis":            "redis:7.2",
+	"postgres":         "postgres:16",
+	"worker":           "company/worker:2.8.0",
+	"sidecar-proxy":    "envoyproxy/envoy:v1.28",
 	"metrics-exporter": "prom/node-exporter:1.7",
-	"envoy":           "envoyproxy/envoy:v1.28",
-	"fluentd":         "fluent/fluentd:v1.16",
-	"memcached":       "memcached:1.6",
-	"rabbitmq":        "rabbitmq:3.12-management",
-	"celery-worker":   "company/celery-worker:1.4.2",
-	"grpc-server":     "company/grpc-server:2.1.0",
-	"graphql-gateway": "company/graphql-gw:1.9.3",
-	"auth-service":    "company/auth:4.0.1",
-	"config-reloader": "jimmidyson/configmap-reload:v0.9.0",
-	"vault-agent":     "hashicorp/vault:1.15",
-	"istio-proxy":     "istio/proxyv2:1.20",
-	"otel-collector":  "otel/opentelemetry-collector:0.91",
-	"log-router":      "fluent/fluent-bit:2.2",
+	"envoy":            "envoyproxy/envoy:v1.28",
+	"fluentd":          "fluent/fluentd:v1.16",
+	"memcached":        "memcached:1.6",
+	"rabbitmq":         "rabbitmq:3.12-management",
+	"celery-worker":    "company/celery-worker:1.4.2",
+	"grpc-server":      "company/grpc-server:2.1.0",
+	"graphql-gateway":  "company/graphql-gw:1.9.3",
+	"auth-service":     "company/auth:4.0.1",
+	"config-reloader":  "jimmidyson/configmap-reload:v0.9.0",
+	"vault-agent":      "hashicorp/vault:1.15",
+	"istio-proxy":      "istio/proxyv2:1.20",
+	"otel-collector":   "otel/opentelemetry-collector:0.91",
+	"log-router":       "fluent/fluent-bit:2.2",
 }
 
 type workloadTemplate struct {
@@ -53,6 +53,7 @@ type workloadTemplate struct {
 	wType      models.WorkloadType
 	replicas   int
 	containers []containerTemplate
+	volumes    []volumeTemplate
 }
 
 type containerTemplate struct {
@@ -63,6 +64,13 @@ type containerTemplate struct {
 	memLimGiB   float64
 	usageFactor float64 // fraction of request actually used (>1 means under-provisioned)
 	noLimits    bool
+}
+
+type volumeTemplate struct {
+	name         string
+	storageClass string
+	requestGiB   float64
+	usageFactor  float64
 }
 
 func NewMockDataProvider(cfg models.Config) *MockDataProvider {
@@ -121,10 +129,10 @@ func (m *MockDataProvider) generateWorkloads() []models.RawWorkload {
 		{name: "postgres-primary", namespace: "production", wType: models.StatefulSet, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 3, cpuReq: 4.0, memReqGiB: 8.0, cpuLim: 8.0, memLimGiB: 16.0, usageFactor: 0.45},
 			{nameIdx: 6, cpuReq: 0.05, memReqGiB: 0.032, cpuLim: 0.1, memLimGiB: 0.064, usageFactor: 0.20},
-		}},
+		}, volumes: []volumeTemplate{{name: "data-postgres-primary-0", storageClass: "gp3", requestGiB: 600, usageFactor: 0.42}}},
 		{name: "redis-cache", namespace: "production", wType: models.StatefulSet, replicas: 3, containers: []containerTemplate{
 			{nameIdx: 2, cpuReq: 1.0, memReqGiB: 4.0, cpuLim: 2.0, memLimGiB: 4.0, usageFactor: 0.80},
-		}},
+		}, volumes: []volumeTemplate{{name: "redis-data", storageClass: "gp3", requestGiB: 180, usageFactor: 0.78}}},
 		{name: "notification-svc", namespace: "production", wType: models.Deployment, replicas: 2, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 0.5, memReqGiB: 0.512, cpuLim: 1.0, memLimGiB: 1.0, usageFactor: 0.15},
 			{nameIdx: 17, cpuReq: 0.1, memReqGiB: 0.128, cpuLim: 0.2, memLimGiB: 0.256, usageFactor: 0.45},
@@ -144,19 +152,19 @@ func (m *MockDataProvider) generateWorkloads() []models.RawWorkload {
 		}},
 		{name: "postgres-staging", namespace: "staging", wType: models.StatefulSet, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 3, cpuReq: 2.0, memReqGiB: 4.0, cpuLim: 4.0, memLimGiB: 8.0, usageFactor: 0.12},
-		}},
+		}, volumes: []volumeTemplate{{name: "data-postgres-staging-0", storageClass: "standard-rwo", requestGiB: 220, usageFactor: 0.18}}},
 		{name: "redis-staging", namespace: "staging", wType: models.StatefulSet, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 2, cpuReq: 0.5, memReqGiB: 1.0, cpuLim: 1.0, memLimGiB: 2.0, usageFactor: 0.10},
-		}},
+		}, volumes: []volumeTemplate{{name: "redis-staging-data", storageClass: "standard-rwo", requestGiB: 80, usageFactor: 0.22}}},
 
 		// --- monitoring (observability stack) ---
 		{name: "prometheus", namespace: "monitoring", wType: models.StatefulSet, replicas: 2, containers: []containerTemplate{
 			{nameIdx: 6, cpuReq: 2.0, memReqGiB: 8.0, cpuLim: 4.0, memLimGiB: 12.0, usageFactor: 0.65},
 			{nameIdx: 15, cpuReq: 0.01, memReqGiB: 0.01, cpuLim: 0.05, memLimGiB: 0.05, usageFactor: 0.50},
-		}},
+		}, volumes: []volumeTemplate{{name: "prometheus-tsdb", storageClass: "gp3", requestGiB: 1200, usageFactor: 0.58}}},
 		{name: "grafana", namespace: "monitoring", wType: models.Deployment, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 0, cpuReq: 0.5, memReqGiB: 1.0, cpuLim: 1.0, memLimGiB: 2.0, usageFactor: 0.30},
-		}},
+		}, volumes: []volumeTemplate{{name: "grafana-storage", storageClass: "gp3", requestGiB: 60, usageFactor: 0.34}}},
 		{name: "alertmanager", namespace: "monitoring", wType: models.StatefulSet, replicas: 2, containers: []containerTemplate{
 			{nameIdx: 6, cpuReq: 0.1, memReqGiB: 0.256, cpuLim: 0.2, memLimGiB: 0.512, usageFactor: 0.25},
 		}},
@@ -194,16 +202,16 @@ func (m *MockDataProvider) generateWorkloads() []models.RawWorkload {
 		{name: "kafka-broker", namespace: "data-pipeline", wType: models.StatefulSet, replicas: 3, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 2.0, memReqGiB: 6.0, cpuLim: 4.0, memLimGiB: 8.0, usageFactor: 0.75},
 			{nameIdx: 6, cpuReq: 0.05, memReqGiB: 0.064, cpuLim: 0.1, memLimGiB: 0.128, usageFactor: 0.40},
-		}},
+		}, volumes: []volumeTemplate{{name: "kafka-data-0", storageClass: "io2", requestGiB: 900, usageFactor: 0.74}}},
 		{name: "flink-jobmanager", namespace: "data-pipeline", wType: models.Deployment, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 1.0, memReqGiB: 2.0, cpuLim: 2.0, memLimGiB: 4.0, usageFactor: 1.25},
 		}},
 		{name: "flink-taskmanager", namespace: "data-pipeline", wType: models.StatefulSet, replicas: 4, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 2.0, memReqGiB: 4.0, cpuLim: 4.0, memLimGiB: 8.0, usageFactor: 0.85},
-		}},
+		}, volumes: []volumeTemplate{{name: "flink-checkpoints", storageClass: "gp3", requestGiB: 320, usageFactor: 0.67}}},
 		{name: "rabbitmq", namespace: "data-pipeline", wType: models.StatefulSet, replicas: 3, containers: []containerTemplate{
 			{nameIdx: 10, cpuReq: 1.0, memReqGiB: 2.0, cpuLim: 2.0, memLimGiB: 4.0, usageFactor: 0.60},
-		}},
+		}, volumes: []volumeTemplate{{name: "rabbitmq-data", storageClass: "gp3", requestGiB: 240, usageFactor: 0.44}}},
 		{name: "etl-cron-job", namespace: "data-pipeline", wType: models.Deployment, replicas: 1, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 0.5, memReqGiB: 1.0, cpuLim: 0.0, memLimGiB: 0.0, usageFactor: 0.0, noLimits: true},
 		}},
@@ -221,7 +229,7 @@ func (m *MockDataProvider) generateWorkloads() []models.RawWorkload {
 		}},
 		{name: "image-resizer", namespace: "frontend", wType: models.Deployment, replicas: 2, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 2.0, memReqGiB: 2.0, cpuLim: 4.0, memLimGiB: 4.0, usageFactor: 0.30},
-		}},
+		}, volumes: []volumeTemplate{{name: "image-cache", storageClass: "gp3", requestGiB: 160, usageFactor: 0.28}}},
 
 		// --- backend (core services, mix of waste and risk) ---
 		{name: "user-service", namespace: "backend", wType: models.Deployment, replicas: 3, containers: []containerTemplate{
@@ -234,7 +242,7 @@ func (m *MockDataProvider) generateWorkloads() []models.RawWorkload {
 		{name: "search-engine", namespace: "backend", wType: models.StatefulSet, replicas: 3, containers: []containerTemplate{
 			{nameIdx: 4, cpuReq: 4.0, memReqGiB: 8.0, cpuLim: 8.0, memLimGiB: 16.0, usageFactor: 0.40},
 			{nameIdx: 6, cpuReq: 0.05, memReqGiB: 0.032, cpuLim: 0.1, memLimGiB: 0.064, usageFactor: 0.25},
-		}},
+		}, volumes: []volumeTemplate{{name: "search-index", storageClass: "gp3", requestGiB: 720, usageFactor: 0.39}}},
 		{name: "email-worker", namespace: "backend", wType: models.Deployment, replicas: 2, containers: []containerTemplate{
 			{nameIdx: 11, cpuReq: 0.25, memReqGiB: 0.512, cpuLim: 0.5, memLimGiB: 1.0, usageFactor: 1.10},
 		}},
@@ -260,12 +268,17 @@ func (m *MockDataProvider) buildWorkload(t workloadTemplate) models.RawWorkload 
 	for _, ct := range t.containers {
 		containers = append(containers, m.buildContainer(ct))
 	}
+	volumes := make([]models.RawPersistentVolume, 0, len(t.volumes))
+	for _, vt := range t.volumes {
+		volumes = append(volumes, m.buildVolume(vt))
+	}
 	return models.RawWorkload{
-		Name:       t.name,
-		Namespace:  t.namespace,
-		Type:       t.wType,
-		Replicas:   t.replicas,
-		Containers: containers,
+		Name:              t.name,
+		Namespace:         t.namespace,
+		Type:              t.wType,
+		Replicas:          t.replicas,
+		Containers:        containers,
+		PersistentVolumes: volumes,
 	}
 }
 
@@ -295,6 +308,16 @@ func (m *MockDataProvider) buildContainer(ct containerTemplate) models.RawContai
 	}
 }
 
+func (m *MockDataProvider) buildVolume(vt volumeTemplate) models.RawPersistentVolume {
+	baseUsage := vt.requestGiB * vt.usageFactor
+	return models.RawPersistentVolume{
+		Name:              vt.name,
+		StorageClass:      vt.storageClass,
+		CurrentRequestGiB: vt.requestGiB,
+		Usage:             m.generateVolumeUsage(baseUsage),
+	}
+}
+
 func (m *MockDataProvider) generateUsageStats(baseCPU, baseMem float64) models.UsageStats {
 	return models.UsageStats{
 		Average: models.ResourceValues{CPUCores: m.jitter(baseCPU, 0.05), MemoryGiB: m.jitter(baseMem, 0.05)},
@@ -310,6 +333,17 @@ func (m *MockDataProvider) generateBestEffortUsage() models.UsageStats {
 	cpuBase := 0.05 + m.rng.Float64()*0.15
 	memBase := 0.02 + m.rng.Float64()*0.10
 	return m.generateUsageStats(cpuBase, memBase)
+}
+
+func (m *MockDataProvider) generateVolumeUsage(baseGiB float64) models.VolumeUsageStats {
+	return models.VolumeUsageStats{
+		AverageGiB: m.jitter(baseGiB, 0.04),
+		P50GiB:     m.jitter(baseGiB*0.96, 0.04),
+		P90GiB:     m.jitter(baseGiB*1.08, 0.04),
+		P95GiB:     m.jitter(baseGiB*1.15, 0.04),
+		P99GiB:     m.jitter(baseGiB*1.22, 0.05),
+		MaxGiB:     m.jitter(baseGiB*1.30, 0.06),
+	}
 }
 
 // GetWorkloadMetrics generates synthetic time-series for the given workload.

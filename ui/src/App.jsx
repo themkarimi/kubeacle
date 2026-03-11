@@ -85,6 +85,12 @@ function fmtMem(gib) {
   return (gib * 1024).toFixed(0) + ' MiB'
 }
 
+function fmtStorage(gib) {
+  if (gib == null) return '—'
+  if (gib >= 1024) return (gib / 1024).toFixed(2) + ' TiB'
+  return fmtMem(gib)
+}
+
 function fmtDollars(v) {
   if (v == null) return '—'
   return '$' + Number(v).toFixed(2)
@@ -196,6 +202,7 @@ const NAV_ITEMS = [
   { id: 'overview',   label: 'Overview',   icon: '◉' },
   { id: 'workloads',  label: 'Workloads',  icon: '☰' },
   { id: 'recommend',  label: 'Recs',       icon: '⚡' },
+  { id: 'storage',    label: 'Storage',    icon: '◫' },
   { id: 'settings',   label: 'Settings',   icon: '⚙' },
 ]
 
@@ -207,8 +214,13 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
 
   const totalWorkloads = summary?.total_workloads ?? workloads?.length ?? 0
   const totalContainers = summary?.total_containers ?? (workloads || []).reduce((s, w) => s + (w.containers?.length || 0), 0)
+  const totalPersistentVolumes = summary?.total_persistent_volumes ?? (workloads || []).reduce((sum, w) => sum + (w.persistent_volumes || 0), 0)
   const cpuWaste = summary?.cpu_waste_percent ?? 0
   const memWaste = summary?.mem_waste_percent ?? 0
+  const storageRequested = summary?.storage_requested_gib ?? 0
+  const storageUsed = summary?.storage_used_gib ?? 0
+  const storageWaste = summary?.storage_waste_percent ?? 0
+  const storageReclaimable = summary?.estimated_storage_reclaim_gib ?? 0
   const estSavings = summary?.estimated_monthly_saving_usd ?? 0
 
   // Build ring chart data
@@ -246,6 +258,11 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
     .filter(w => w.overall_risk === 'CRITICAL' || w.overall_risk === 'HIGH')
     .slice(0, 6)
 
+  const storageRecommendations = (workloads || [])
+    .filter(w => (w.persistent_volumes || 0) > 0)
+    .sort((a, b) => (b.estimated_storage_reclaim_gib || 0) - (a.estimated_storage_reclaim_gib || 0))
+    .slice(0, 6)
+
   const RING_COLORS = [C.cyan, C.border]
   const RING_COLORS_MEM = [C.amber, C.border]
 
@@ -255,8 +272,10 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <KPICard label="Workloads" value={totalWorkloads} />
         <KPICard label="Containers" value={totalContainers} />
+        <KPICard label="PVCs" value={totalPersistentVolumes} accent={C.purple} />
         <KPICard label="CPU Waste" value={pct(cpuWaste / 100)} accent={cpuWaste > 50 ? C.red : C.amber} />
         <KPICard label="Mem Waste" value={pct(memWaste / 100)} accent={memWaste > 50 ? C.red : C.amber} />
+        <KPICard label="Storage Reclaim" value={fmtStorage(storageReclaimable)} accent={C.purple} />
         <KPICard label="Est. Savings" value={fmtDollars(estSavings)} sub="/month" accent={C.green} />
       </div>
 
@@ -312,8 +331,32 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
         </div>
       </div>
 
-      {/* Namespace Heatmap & Recent Recs */}
+      {/* Storage, Namespace Heatmap, Recent Recs */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 400px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
+          <div style={{ fontFamily: FONT.head, fontSize: 14, color: C.text, marginBottom: 16, fontWeight: 600 }}>PersistentVolume Usage</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, marginBottom: 6 }}>REQUESTED</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 18, fontWeight: 700, color: C.text }}>{fmtStorage(storageRequested)}</div>
+            </div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, marginBottom: 6 }}>USED</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 18, fontWeight: 700, color: C.cyan }}>{fmtStorage(storageUsed)}</div>
+            </div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, marginBottom: 6 }}>WASTE</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 18, fontWeight: 700, color: storageWaste > 45 ? C.red : storageWaste > 25 ? C.amber : C.green }}>{pct(storageWaste / 100)}</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <WasteBar value={storageWaste} />
+          </div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim }}>
+            {totalPersistentVolumes} claims tracked · {fmtStorage(storageReclaimable)} potentially reclaimable
+          </div>
+        </div>
+
         {/* Namespace Heatmap */}
         <div style={{ flex: '1 1 400px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
           <div style={{ fontFamily: FONT.head, fontSize: 14, color: C.text, marginBottom: 16, fontWeight: 600 }}>Namespace Heatmap</div>
@@ -332,6 +375,28 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
                 </div>
               )
             })}
+          </div>
+        </div>
+
+        <div style={{ flex: '1 1 400px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
+          <div style={{ fontFamily: FONT.head, fontSize: 14, color: C.text, marginBottom: 16, fontWeight: 600 }}>Storage Recommender</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {storageRecommendations.length === 0 && <div style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim }}>No PVC recommendations yet</div>}
+            {storageRecommendations.map((w, i) => (
+              <div key={i} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '8px 12px', borderRadius: 6, background: C.bg, border: `1px solid ${C.border}`,
+              }}>
+                <div>
+                  <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.text }}>{w.name}</span>
+                  <span style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginLeft: 8 }}>{w.namespace}</span>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 12, color: C.purple, fontWeight: 700 }}>{fmtStorage(w.estimated_storage_reclaim_gib)}</div>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>{w.persistent_volumes || 0} PVCs</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -454,7 +519,7 @@ function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                 <td style={{ ...tdStyle, color: C.cyan, fontWeight: 600 }}>{w.name}</td>
                 <td style={tdStyle}>{w.namespace}</td>
-                <td style={tdStyle}><Badge color={C.dim}>{w.kind || 'Deployment'}</Badge></td>
+                <td style={tdStyle}><Badge color={C.dim}>{w.type || 'Deployment'}</Badge></td>
                 <td style={tdStyle}>{w.replicas ?? '—'}</td>
                 <td style={tdStyle}><Badge color={w.qos_class === 'Guaranteed' ? C.green : w.qos_class === 'Burstable' ? C.amber : C.dim}>{w.qos_class || '—'}</Badge></td>
                 <td style={{ ...tdStyle, minWidth: 120 }}>
@@ -464,7 +529,7 @@ function WorkloadExplorer({ workloads, namespaces, loading, onSelect }) {
                   </div>
                 </td>
                 <td style={tdStyle}><Badge color={RISK_COLORS[w.overall_risk] || C.dim}>{w.overall_risk || '—'}</Badge></td>
-                <td style={tdStyle}>{w.containers?.length ?? 0}</td>
+                <td style={tdStyle}>{typeof w.containers === 'number' ? w.containers : (w.containers?.length ?? 0)}</td>
                 <td style={{ ...tdStyle, color: C.green }}>{fmtDollars(w.estimated_monthly_saving_usd)}</td>
               </tr>
             ))}
@@ -505,23 +570,29 @@ function WorkloadDetail({ workload, onBack, toast }) {
 
   const w = workload
   const containers = w.containers || []
+  const volumes = w.persistent_volumes || []
 
   // Collect YAML patches and kubectl commands from all containers
   const yamlPatch = containers.map(c => {
     const rec = c.recommendation || {}
     return rec.yaml_patch || `# ${c.name}\nresources:\n  requests:\n    cpu: "${(rec.request?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.request?.memory_gib || 0) * 1024).toFixed(0)}Mi"\n  limits:\n    cpu: "${(rec.limit?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.limit?.memory_gib || 0) * 1024).toFixed(0)}Mi"`
-  }).join('\n---\n')
+  }).concat(volumes.map(v => {
+    const rec = v.recommendation || {}
+    return rec.yaml_patch || `# ${v.name}\nspec:\n  resources:\n    requests:\n      storage: "${Math.ceil(rec.request_gib || 0)}Gi"`
+  })).join('\n---\n')
 
   const kubectlCmd = containers.map(c => {
     const rec = c.recommendation || {}
     return rec.kubectl_cmd || ''
-  }).filter(Boolean).join('\n') || `kubectl set resources ${(w.type || 'Deployment').toLowerCase()}/${w.name} -n ${w.namespace}`
+  }).concat(volumes.map(v => v.recommendation?.kubectl_cmd || '')).filter(Boolean).join('\n') || `kubectl set resources ${(w.type || 'Deployment').toLowerCase()}/${w.name} -n ${w.namespace}`
 
   // Collect all issues from all containers
   const allIssues = containers.flatMap(c => (c.issues || []).map(issue => ({ container: c.name, issue })))
+  .concat(volumes.flatMap(v => (v.issues || []).map(issue => ({ container: v.name, issue }))))
 
   // Compute total estimated savings from container recommendations
   const totalSaving = containers.reduce((sum, c) => sum + ((c.recommendation?.estimated_monthly_saving_usd || 0) * (w.replicas || 1)), 0)
+  const totalStorageReclaim = volumes.reduce((sum, v) => sum + (v.recommendation?.reclaimable_gib || 0), 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -543,8 +614,52 @@ function WorkloadDetail({ workload, onBack, toast }) {
         <div style={{ fontFamily: FONT.mono, fontSize: 13, color: C.dim, marginTop: 8 }}>
           Waste Score: <span style={{ color: w.overall_waste_score > 70 ? C.red : w.overall_waste_score > 40 ? C.amber : C.green, fontWeight: 700 }}>{(w.overall_waste_score || 0).toFixed(1)}%</span>
           {' · '}Estimated Savings: <span style={{ color: C.green, fontWeight: 700 }}>{fmtDollars(totalSaving)}/mo</span>
+          {volumes.length > 0 && <> {' · '}Storage Reclaim: <span style={{ color: C.purple, fontWeight: 700 }}>{fmtStorage(totalStorageReclaim)}</span></>}
         </div>
       </div>
+
+      {volumes.length > 0 && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
+          <div style={{ fontFamily: FONT.head, fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 16 }}>PersistentVolume Usage & Recommender</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {volumes.map((v, vi) => {
+              const rec = v.recommendation || {}
+              const usage = v.usage || {}
+              return (
+                <div key={vi} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 18 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: C.text }}>{v.name}</div>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginTop: 2 }}>{v.storage_class || 'unknown class'}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <Badge color={RISK_COLORS[v.risk_level] || C.dim}>{v.risk_level || 'LOW'}</Badge>
+                      <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim }}>Waste: {(v.waste_score || 0).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 12 }}>
+                    <MetricCell label="Current Request" value={fmtStorage(v.current_request_gib)} />
+                    <MetricCell label="Average Usage" value={fmtStorage(usage.average_gib)} />
+                    <MetricCell label="P95 Usage" value={fmtStorage(usage.p95_gib)} />
+                    <MetricCell label="Recommended" value={fmtStorage(rec.request_gib)} accent={C.purple} />
+                    <MetricCell label="Reclaimable" value={fmtStorage(rec.reclaimable_gib)} accent={C.purple} />
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <WasteBar value={v.waste_score} />
+                  </div>
+                  {rec.reasoning && (
+                    <pre style={{
+                      background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
+                      padding: 12, fontFamily: FONT.mono, fontSize: 11, color: C.dim,
+                      overflow: 'auto', margin: 0, whiteSpace: 'pre-wrap',
+                    }}>{rec.reasoning}</pre>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Container Details */}
       {containers.map((c, ci) => {
@@ -912,6 +1027,75 @@ function Recommendations({ workloads, loading, onSelect }) {
   )
 }
 
+function StorageRecommendations({ workloads, loading, onSelect }) {
+  const [nsFilter, setNsFilter] = useState('')
+  const [sortBy, setSortBy] = useState('reclaim')
+
+  if (loading) return <LoadingView />
+
+  const uniqueNs = [...new Set((workloads || []).map(w => w.namespace).filter(Boolean))].sort()
+  const items = (workloads || [])
+    .filter(w => (w.persistent_volumes || 0) > 0)
+    .filter(w => !nsFilter || w.namespace === nsFilter)
+    .sort((a, b) => {
+      if (sortBy === 'waste') return (b.overall_storage_waste_score || 0) - (a.overall_storage_waste_score || 0)
+      if (sortBy === 'claims') return (b.persistent_volumes || 0) - (a.persistent_volumes || 0)
+      return (b.estimated_storage_reclaim_gib || 0) - (a.estimated_storage_reclaim_gib || 0)
+    })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={nsFilter} onChange={e => setNsFilter(e.target.value)} style={selectStyle()}>
+          <option value="">All Namespaces</option>
+          {uniqueNs.map(ns => <option key={ns} value={ns}>{ns}</option>)}
+        </select>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={selectStyle()}>
+          <option value="reclaim">Sort by Reclaimable</option>
+          <option value="waste">Sort by Waste</option>
+          <option value="claims">Sort by PVC Count</option>
+        </select>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+        {items.map((w, i) => (
+          <div key={w.name + w.namespace + 'storage' + i} onClick={() => onSelect(w)} style={{
+            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+            padding: 16, cursor: 'pointer', transition: 'border-color .2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = C.purple }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = C.border }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+              <div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: C.text }}>{w.name}</div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, marginTop: 2 }}>{w.namespace}</div>
+              </div>
+              <Badge color={C.purple}>{w.persistent_volumes || 0} PVCs</Badge>
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>STORAGE WASTE</div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: C.purple }}>{(w.overall_storage_waste_score || 0).toFixed(0)}%</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim }}>RECLAIMABLE</div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: C.cyan }}>{fmtStorage(w.estimated_storage_reclaim_gib)}</div>
+              </div>
+            </div>
+            <WasteBar value={w.overall_storage_waste_score} />
+          </div>
+        ))}
+      </div>
+
+      {items.length === 0 && (
+        <div style={{ textAlign: 'center', padding: 60, fontFamily: FONT.mono, fontSize: 14, color: C.dim }}>
+          No storage recommendations matching filters
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1151,6 +1335,8 @@ export default function App() {
         return <WorkloadDetail workload={selectedWorkload} onBack={handleBack} toast={toast} />
       case 'recommend':
         return <Recommendations workloads={workloads} loading={loading} onSelect={handleSelectWorkload} />
+      case 'storage':
+        return <StorageRecommendations workloads={workloads} loading={loading} onSelect={handleSelectWorkload} />
       case 'settings':
         return <Settings toast={toast} />
       default:
@@ -1200,12 +1386,10 @@ export default function App() {
           <div style={{
             padding: '0 20px 24px', borderBottom: `1px solid ${C.border}`, marginBottom: 8,
           }}>
-            <div style={{ fontFamily: FONT.head, fontSize: 22, fontWeight: 800, color: C.cyan, letterSpacing: '-0.5px' }}>
+            <div style={{ fontFamily: FONT.head, fontSize: 20, fontWeight: 800, color: C.cyan, letterSpacing: '-0.5px' }}>
               KUBEACLE
             </div>
-            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 }}>
-              Rightsizer
-            </div>
+
           </div>
 
           {/* Nav Items */}
@@ -1259,6 +1443,7 @@ export default function App() {
                 {view === 'workloads' && 'Workload Explorer'}
                 {view === 'detail' && (selectedWorkload?.name || 'Workload Detail')}
                 {view === 'recommend' && 'Recommendations'}
+                {view === 'storage' && 'Storage Recommendations'}
                 {view === 'settings' && 'Settings'}
               </h1>
               <p style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim, marginTop: 4 }}>
@@ -1266,6 +1451,7 @@ export default function App() {
                 {view === 'workloads' && 'Browse and analyze Kubernetes workloads'}
                 {view === 'detail' && 'Detailed resource analysis and recommendations'}
                 {view === 'recommend' && 'Prioritized optimization recommendations'}
+                {view === 'storage' && 'Dedicated persistent volume sizing and reclaim recommendations'}
                 {view === 'settings' && 'Configure analysis parameters and data sources'}
               </p>
             </div>

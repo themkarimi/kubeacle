@@ -40,6 +40,15 @@ type UsageStats struct {
 	Average ResourceValues `json:"average"`
 }
 
+type VolumeUsageStats struct {
+	P50GiB     float64 `json:"p50_gib"`
+	P90GiB     float64 `json:"p90_gib"`
+	P95GiB     float64 `json:"p95_gib"`
+	P99GiB     float64 `json:"p99_gib"`
+	MaxGiB     float64 `json:"max_gib"`
+	AverageGiB float64 `json:"average_gib"`
+}
+
 type ContainerAnalysis struct {
 	Name            string         `json:"name"`
 	Image           string         `json:"image"`
@@ -63,39 +72,68 @@ type Recommendation struct {
 	KubectlCmd      string         `json:"kubectl_cmd"`
 }
 
+type VolumeRecommendation struct {
+	RequestGiB     float64 `json:"request_gib"`
+	HeadroomFactor float64 `json:"headroom_factor"`
+	ReclaimableGiB float64 `json:"reclaimable_gib"`
+	Reasoning      string  `json:"reasoning"`
+	YAMLPatch      string  `json:"yaml_patch"`
+	KubectlCmd     string  `json:"kubectl_cmd"`
+}
+
 type WorkloadAnalysis struct {
-	ID           string              `json:"id"`
-	Name         string              `json:"name"`
-	Namespace    string              `json:"namespace"`
-	Type         WorkloadType        `json:"type"`
-	Replicas     int                 `json:"replicas"`
-	QoSClass     QoSClass            `json:"qos_class"`
-	Containers   []ContainerAnalysis `json:"containers"`
-	OverallWaste float64             `json:"overall_waste_score"`
-	OverallRisk  RiskLevel           `json:"overall_risk"`
-	LastAnalyzed time.Time           `json:"last_analyzed"`
+	ID                  string                     `json:"id"`
+	Name                string                     `json:"name"`
+	Namespace           string                     `json:"namespace"`
+	Type                WorkloadType               `json:"type"`
+	Replicas            int                        `json:"replicas"`
+	QoSClass            QoSClass                   `json:"qos_class"`
+	Containers          []ContainerAnalysis        `json:"containers"`
+	PersistentVolumes   []PersistentVolumeAnalysis `json:"persistent_volumes,omitempty"`
+	OverallWaste        float64                    `json:"overall_waste_score"`
+	OverallStorageWaste float64                    `json:"overall_storage_waste_score"`
+	OverallRisk         RiskLevel                  `json:"overall_risk"`
+	LastAnalyzed        time.Time                  `json:"last_analyzed"`
+}
+
+type PersistentVolumeAnalysis struct {
+	Name              string               `json:"name"`
+	StorageClass      string               `json:"storage_class,omitempty"`
+	CurrentRequestGiB float64              `json:"current_request_gib"`
+	Usage             VolumeUsageStats     `json:"usage"`
+	Recommended       VolumeRecommendation `json:"recommendation"`
+	WasteScore        float64              `json:"waste_score"`
+	RiskLevel         RiskLevel            `json:"risk_level"`
+	Issues            []string             `json:"issues"`
+	ConfidenceScore   float64              `json:"confidence_score"`
 }
 
 type NamespaceSummary struct {
-	Namespace       string  `json:"namespace"`
-	WorkloadCount   int     `json:"workload_count"`
-	CPUWastePercent float64 `json:"cpu_waste_percent"`
-	MemWastePercent float64 `json:"mem_waste_percent"`
-	EstimatedSaving float64 `json:"estimated_monthly_saving_usd"`
+	Namespace           string  `json:"namespace"`
+	WorkloadCount       int     `json:"workload_count"`
+	CPUWastePercent     float64 `json:"cpu_waste_percent"`
+	MemWastePercent     float64 `json:"mem_waste_percent"`
+	StorageWastePercent float64 `json:"storage_waste_percent"`
+	EstimatedSaving     float64 `json:"estimated_monthly_saving_usd"`
 }
 
 type ClusterSummary struct {
-	TotalWorkloads       int                `json:"total_workloads"`
-	TotalContainers      int                `json:"total_containers"`
-	CPURequestedCores    float64            `json:"cpu_requested_cores"`
-	CPUUsedCores         float64            `json:"cpu_used_cores"`
-	CPUWastePercent      float64            `json:"cpu_waste_percent"`
-	MemRequestedGiB      float64            `json:"mem_requested_gib"`
-	MemUsedGiB           float64            `json:"mem_used_gib"`
-	MemWastePercent      float64            `json:"mem_waste_percent"`
-	EstimatedMonthlySave float64            `json:"estimated_monthly_saving_usd"`
-	RiskDistribution     map[RiskLevel]int  `json:"risk_distribution"`
-	NamespaceSummaries   []NamespaceSummary `json:"namespace_summaries"`
+	TotalWorkloads             int                `json:"total_workloads"`
+	TotalContainers            int                `json:"total_containers"`
+	TotalPersistentVolumes     int                `json:"total_persistent_volumes"`
+	CPURequestedCores          float64            `json:"cpu_requested_cores"`
+	CPUUsedCores               float64            `json:"cpu_used_cores"`
+	CPUWastePercent            float64            `json:"cpu_waste_percent"`
+	MemRequestedGiB            float64            `json:"mem_requested_gib"`
+	MemUsedGiB                 float64            `json:"mem_used_gib"`
+	MemWastePercent            float64            `json:"mem_waste_percent"`
+	StorageRequestedGiB        float64            `json:"storage_requested_gib"`
+	StorageUsedGiB             float64            `json:"storage_used_gib"`
+	StorageWastePercent        float64            `json:"storage_waste_percent"`
+	EstimatedStorageReclaimGiB float64            `json:"estimated_storage_reclaim_gib"`
+	EstimatedMonthlySave       float64            `json:"estimated_monthly_saving_usd"`
+	RiskDistribution           map[RiskLevel]int  `json:"risk_distribution"`
+	NamespaceSummaries         []NamespaceSummary `json:"namespace_summaries"`
 }
 
 type Config struct {
@@ -113,11 +151,12 @@ type Config struct {
 
 // RawWorkload is the raw data from Kubernetes/Prometheus before analysis
 type RawWorkload struct {
-	Name       string         `json:"name"`
-	Namespace  string         `json:"namespace"`
-	Type       WorkloadType   `json:"type"`
-	Replicas   int            `json:"replicas"`
-	Containers []RawContainer `json:"containers"`
+	Name              string                `json:"name"`
+	Namespace         string                `json:"namespace"`
+	Type              WorkloadType          `json:"type"`
+	Replicas          int                   `json:"replicas"`
+	Containers        []RawContainer        `json:"containers"`
+	PersistentVolumes []RawPersistentVolume `json:"persistent_volumes,omitempty"`
 }
 
 type RawContainer struct {
@@ -126,6 +165,13 @@ type RawContainer struct {
 	CurrentRequest ResourceValues `json:"current_request"`
 	CurrentLimit   ResourceValues `json:"current_limit"`
 	Usage          UsageStats     `json:"usage"`
+}
+
+type RawPersistentVolume struct {
+	Name              string           `json:"name"`
+	StorageClass      string           `json:"storage_class,omitempty"`
+	CurrentRequestGiB float64          `json:"current_request_gib"`
+	Usage             VolumeUsageStats `json:"usage"`
 }
 
 // TimeSeriesPoint is a single timestamped resource measurement.
@@ -143,10 +189,10 @@ type ContainerMetrics struct {
 
 // WorkloadMetrics holds time-series data for all containers in a workload.
 type WorkloadMetrics struct {
-	Name       string             `json:"name"`
-	Namespace  string             `json:"namespace"`
-	Containers []ContainerMetrics `json:"containers"`
-	StepSeconds int               `json:"step_seconds"`
+	Name        string             `json:"name"`
+	Namespace   string             `json:"namespace"`
+	Containers  []ContainerMetrics `json:"containers"`
+	StepSeconds int                `json:"step_seconds"`
 }
 
 // PaginatedResponse is a generic paginated response
@@ -165,14 +211,17 @@ type ErrorResponse struct {
 
 // WorkloadSummary is a summary view of a workload for list views
 type WorkloadSummary struct {
-	ID              string       `json:"id"`
-	Name            string       `json:"name"`
-	Namespace       string       `json:"namespace"`
-	Type            WorkloadType `json:"type"`
-	Replicas        int          `json:"replicas"`
-	QoSClass        QoSClass     `json:"qos_class"`
-	OverallWaste    float64      `json:"overall_waste_score"`
-	OverallRisk     RiskLevel    `json:"overall_risk"`
-	Containers      int          `json:"containers"`
-	EstimatedSaving float64      `json:"estimated_monthly_saving_usd"`
+	ID                         string       `json:"id"`
+	Name                       string       `json:"name"`
+	Namespace                  string       `json:"namespace"`
+	Type                       WorkloadType `json:"type"`
+	Replicas                   int          `json:"replicas"`
+	QoSClass                   QoSClass     `json:"qos_class"`
+	OverallWaste               float64      `json:"overall_waste_score"`
+	OverallStorageWaste        float64      `json:"overall_storage_waste_score"`
+	OverallRisk                RiskLevel    `json:"overall_risk"`
+	Containers                 int          `json:"containers"`
+	PersistentVolumes          int          `json:"persistent_volumes"`
+	EstimatedSaving            float64      `json:"estimated_monthly_saving_usd"`
+	EstimatedStorageReclaimGiB float64      `json:"estimated_storage_reclaim_gib"`
 }
