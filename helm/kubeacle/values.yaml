@@ -43,7 +43,8 @@ backend:
   # -- Rightsizer runtime configuration (all mapped to environment variables).
   config:
     # -- Run with deterministic mock data instead of querying Prometheus.
-    mockMode: "true"
+    # Set to "true" only for local development or demos without a live cluster.
+    mockMode: "false"
     # -- HTTP listen port inside the container.
     port: "8080"
     # -- Prometheus API URL.
