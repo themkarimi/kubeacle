@@ -135,15 +135,7 @@ frontend:
   # -- Security context for the frontend pod.
   podSecurityContext: {}
   # -- Security context for the frontend container.
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 101
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-      add:
-        - NET_BIND_SERVICE
+  securityContext: {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Prometheus (optional – can be replaced by an external instance)

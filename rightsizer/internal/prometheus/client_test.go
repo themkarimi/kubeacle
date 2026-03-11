@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +55,49 @@ func promVectorResponse(samples []map[string]interface{}) []byte {
 	b, err := json.Marshal(resp)
 	if err != nil {
 		panic("promVectorResponse: json.Marshal failed: " + err.Error())
+	}
+	return b
+}
+
+func promRangeMatrixResponse(series []map[string]interface{}) []byte {
+	type rangeSeries struct {
+		Metric map[string]string `json:"metric"`
+		Values [][]interface{}   `json:"values"`
+	}
+
+	result := make([]rangeSeries, 0, len(series))
+	for _, item := range series {
+		metric := make(map[string]string)
+		for key, value := range item {
+			if key == "__values__" {
+				continue
+			}
+			if str, ok := value.(string); ok {
+				metric[key] = str
+			}
+		}
+
+		values := make([][]interface{}, 0)
+		if rawValues, ok := item["__values__"].([][]interface{}); ok {
+			values = rawValues
+		}
+
+		result = append(result, rangeSeries{
+			Metric: metric,
+			Values: values,
+		})
+	}
+
+	resp := map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"resultType": "matrix",
+			"result":     result,
+		},
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		panic("promRangeMatrixResponse: json.Marshal failed: " + err.Error())
 	}
 	return b
 }
@@ -240,15 +284,15 @@ func TestGetWorkloadsFiltersNamespace(t *testing.T) {
 			{"namespace": "ns1", "deployment": "svc-a", "__value__": "1"},
 			{"namespace": "ns2", "deployment": "svc-b", "__value__": "1"},
 		}),
-		"kube_statefulset_spec_replicas":                    promVectorResponse(nil),
-		`kube_pod_owner{owner_kind="ReplicaSet"}`:           promVectorResponse(nil),
-		`kube_replicaset_owner{owner_kind="Deployment"}`:    promVectorResponse(nil),
-		`kube_pod_owner{owner_kind="StatefulSet"}`:          promVectorResponse(nil),
+		"kube_statefulset_spec_replicas":                                        promVectorResponse(nil),
+		`kube_pod_owner{owner_kind="ReplicaSet"}`:                               promVectorResponse(nil),
+		`kube_replicaset_owner{owner_kind="Deployment"}`:                        promVectorResponse(nil),
+		`kube_pod_owner{owner_kind="StatefulSet"}`:                              promVectorResponse(nil),
 		`kube_pod_container_resource_requests{resource="cpu",container!=""}`:    promVectorResponse(nil),
 		`kube_pod_container_resource_requests{resource="memory",container!=""}`: promVectorResponse(nil),
 		`kube_pod_container_resource_limits{resource="cpu",container!=""}`:      promVectorResponse(nil),
 		`kube_pod_container_resource_limits{resource="memory",container!=""}`:   promVectorResponse(nil),
-		`kube_pod_container_info{container!=""}`:                                 promVectorResponse(nil),
+		`kube_pod_container_info{container!=""}`:                                promVectorResponse(nil),
 	}
 	emptyResp, err := json.Marshal(map[string]interface{}{
 		"status": "success",
@@ -317,5 +361,117 @@ func TestQueryInstantError(t *testing.T) {
 	_, err := c.queryInstant(context.Background(), "invalid{query")
 	if err == nil {
 		t.Fatal("expected error for bad query, got nil")
+	}
+}
+
+func TestGetWorkloadMetricsFiltersToMatchingWorkloadPods(t *testing.T) {
+	queryResponses := map[string][]byte{
+		`kube_pod_owner{namespace="production",owner_kind="ReplicaSet"}`: promVectorResponse([]map[string]interface{}{
+			{"namespace": "production", "pod": "web-abc-1", "owner_name": "web-abc", "__value__": "1"},
+			{"namespace": "production", "pod": "api-def-1", "owner_name": "api-def", "__value__": "1"},
+		}),
+		`kube_replicaset_owner{namespace="production",owner_kind="Deployment",owner_name="web"}`: promVectorResponse([]map[string]interface{}{
+			{"namespace": "production", "replicaset": "web-abc", "owner_name": "web", "__value__": "1"},
+		}),
+		`kube_pod_owner{namespace="production",owner_kind="StatefulSet",owner_name="web"}`: promVectorResponse(nil),
+	}
+
+	cpuRangeResponse := promRangeMatrixResponse([]map[string]interface{}{
+		{
+			"namespace": "production",
+			"pod":       "web-abc-1",
+			"container": "app",
+			"__values__": [][]interface{}{
+				{1234567890.0, "0.20"},
+				{1234568190.0, "0.25"},
+			},
+		},
+	})
+	memRangeResponse := promRangeMatrixResponse([]map[string]interface{}{
+		{
+			"namespace": "production",
+			"pod":       "web-abc-1",
+			"container": "app",
+			"__values__": [][]interface{}{
+				{1234567890.0, "1073741824"},
+				{1234568190.0, "2147483648"},
+			},
+		},
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/query":
+			query := r.URL.Query().Get("query")
+			if resp, ok := queryResponses[query]; ok {
+				w.Write(resp)
+				return
+			}
+			w.Write(promVectorResponse(nil))
+		case "/api/v1/query_range":
+			query := r.URL.Query().Get("query")
+			if !strings.Contains(query, `pod=~"web-abc-1"`) {
+				t.Fatalf("expected workload metrics query to filter by resolved pod, got %q", query)
+			}
+			if strings.Contains(query, "container_cpu_usage_seconds_total") {
+				w.Write(cpuRangeResponse)
+				return
+			}
+			if strings.Contains(query, "container_memory_working_set_bytes") {
+				w.Write(memRangeResponse)
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 168*time.Hour)
+	metrics, err := c.GetWorkloadMetrics(context.Background(), "production", "web", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics == nil {
+		t.Fatal("expected workload metrics, got nil")
+	}
+	if metrics.Name != "web" {
+		t.Fatalf("expected workload name web, got %q", metrics.Name)
+	}
+	if len(metrics.Containers) != 1 {
+		t.Fatalf("expected 1 container series, got %d", len(metrics.Containers))
+	}
+	if metrics.Containers[0].Name != "app" {
+		t.Fatalf("expected container app, got %q", metrics.Containers[0].Name)
+	}
+	if len(metrics.Containers[0].Series) != 2 {
+		t.Fatalf("expected 2 points, got %d", len(metrics.Containers[0].Series))
+	}
+	if metrics.Containers[0].Series[0].MemoryGiB != 1 {
+		t.Fatalf("expected first memory point to be 1 GiB, got %f", metrics.Containers[0].Series[0].MemoryGiB)
+	}
+}
+
+func TestGetWorkloadMetricsReturnsNilWithoutMatchingPods(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/query":
+			w.Write(promVectorResponse(nil))
+		case "/api/v1/query_range":
+			t.Fatal("did not expect range query when no workload pods exist")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, 168*time.Hour)
+	metrics, err := c.GetWorkloadMetrics(context.Background(), "production", "missing", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics != nil {
+		t.Fatalf("expected nil metrics when workload has no pods, got %#v", metrics)
 	}
 }

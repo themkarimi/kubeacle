@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -633,6 +634,68 @@ func (c *Client) queryRange(ctx context.Context, query string, start, end time.T
 	return result.Data.Result, nil
 }
 
+func (c *Client) getWorkloadPods(ctx context.Context, namespace, name string) ([]string, error) {
+	podToReplicaSet, err := c.queryInstant(ctx,
+		fmt.Sprintf(`kube_pod_owner{namespace=%q,owner_kind="ReplicaSet"}`, namespace))
+	if err != nil {
+		return nil, fmt.Errorf("querying deployment pod owners: %w", err)
+	}
+
+	replicaSetToDeployment, err := c.queryInstant(ctx,
+		fmt.Sprintf(`kube_replicaset_owner{namespace=%q,owner_kind="Deployment",owner_name=%q}`, namespace, name))
+	if err != nil {
+		return nil, fmt.Errorf("querying deployment owners: %w", err)
+	}
+
+	targetReplicaSets := make(map[string]struct{}, len(replicaSetToDeployment))
+	for _, sample := range replicaSetToDeployment {
+		if replicaSet := sample.Metric["replicaset"]; replicaSet != "" {
+			targetReplicaSets[replicaSet] = struct{}{}
+		}
+	}
+
+	podSet := make(map[string]struct{})
+	for _, sample := range podToReplicaSet {
+		pod := sample.Metric["pod"]
+		replicaSet := sample.Metric["owner_name"]
+		if pod == "" || replicaSet == "" {
+			continue
+		}
+		if _, ok := targetReplicaSets[replicaSet]; ok {
+			podSet[pod] = struct{}{}
+		}
+	}
+
+	statefulSetPods, err := c.queryInstant(ctx,
+		fmt.Sprintf(`kube_pod_owner{namespace=%q,owner_kind="StatefulSet",owner_name=%q}`, namespace, name))
+	if err != nil {
+		return nil, fmt.Errorf("querying statefulset pod owners: %w", err)
+	}
+	for _, sample := range statefulSetPods {
+		if pod := sample.Metric["pod"]; pod != "" {
+			podSet[pod] = struct{}{}
+		}
+	}
+
+	pods := make([]string, 0, len(podSet))
+	for pod := range podSet {
+		pods = append(pods, pod)
+	}
+	sort.Strings(pods)
+	return pods, nil
+}
+
+func promRegexAlternation(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	escaped := make([]string, 0, len(values))
+	for _, value := range values {
+		escaped = append(escaped, regexp.QuoteMeta(value))
+	}
+	return strings.Join(escaped, "|")
+}
+
 // GetWorkloadMetrics queries Prometheus for time-series CPU and memory usage
 // for all containers in the given workload over the lookback window.
 func (c *Client) GetWorkloadMetrics(ctx context.Context, namespace, name string, lookback time.Duration) (*models.WorkloadMetrics, error) {
@@ -640,19 +703,27 @@ func (c *Client) GetWorkloadMetrics(ctx context.Context, namespace, name string,
 		lookback = c.lookback
 	}
 
+	pods, err := c.getWorkloadPods(ctx, namespace, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(pods) == 0 {
+		return nil, nil
+	}
+
 	step := 5 * time.Minute
 	end := time.Now().UTC()
 	start := end.Add(-lookback)
+	podMatcher := promRegexAlternation(pods)
 
-	// We query CPU rate and memory usage, filtered by namespace.
-	// The workload-to-pod mapping is done via kube_pod_owner.
+	// Query only the pods that currently belong to this workload.
 	cpuQuery := fmt.Sprintf(
-		`rate(container_cpu_usage_seconds_total{namespace=%q,container!="",container!="POD"}[5m])`,
-		namespace,
+		`rate(container_cpu_usage_seconds_total{namespace=%q,pod=~%q,container!="",container!="POD"}[5m])`,
+		namespace, podMatcher,
 	)
 	memQuery := fmt.Sprintf(
-		`container_memory_working_set_bytes{namespace=%q,container!="",container!="POD"}`,
-		namespace,
+		`container_memory_working_set_bytes{namespace=%q,pod=~%q,container!="",container!="POD"}`,
+		namespace, podMatcher,
 	)
 
 	type rangeResult struct {

@@ -35,3 +35,5 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+values-temp.yaml
