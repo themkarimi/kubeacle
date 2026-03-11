@@ -201,6 +201,36 @@ func (s *Server) handleGetWorkloadAnalysis(w http.ResponseWriter, r *http.Reques
 		fmt.Sprintf("workload %s not found", targetID))
 }
 
+func (s *Server) handleGetWorkloadMetrics(w http.ResponseWriter, r *http.Request) {
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+
+	if s.cfg.MockMode {
+		metrics := s.mockData.GetWorkloadMetrics(namespace, name, s.cfg.LookbackWindow)
+		if metrics == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND",
+				fmt.Sprintf("workload %s/%s not found", namespace, name))
+			return
+		}
+		writeJSON(w, http.StatusOK, metrics)
+		return
+	}
+
+	// Live mode: query Prometheus for range data
+	ctx := r.Context()
+	metrics, err := s.promClient.GetWorkloadMetrics(ctx, namespace, name, s.cfg.LookbackWindow)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "PROMETHEUS_ERROR", err.Error())
+		return
+	}
+	if metrics == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND",
+			fmt.Sprintf("workload %s/%s not found", namespace, name))
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func (s *Server) handleGetRecommendations(w http.ResponseWriter, r *http.Request) {
 	analyzed, err := s.getAnalyzedWorkloads(r.Context())
 	if err != nil {

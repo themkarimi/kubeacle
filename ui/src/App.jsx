@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar,
   XAxis, YAxis, Tooltip, RadialBarChart, RadialBar, Legend,
+  AreaChart, Area, CartesianGrid, ReferenceLine,
 } from 'recharts'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
@@ -486,6 +487,20 @@ function selectStyle() {
 // WORKLOAD DETAIL VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
 function WorkloadDetail({ workload, onBack, toast }) {
+  const [metrics, setMetrics] = useState(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!workload) return
+    let cancelled = false
+    setMetricsLoading(true)
+    apiFetch(`/api/v1/workloads/${encodeURIComponent(workload.namespace)}/${encodeURIComponent(workload.name)}/metrics`)
+      .then(data => { if (!cancelled) setMetrics(data) })
+      .catch(() => { if (!cancelled) setMetrics(null) })
+      .finally(() => { if (!cancelled) setMetricsLoading(false) })
+    return () => { cancelled = true }
+  }, [workload?.namespace, workload?.name])
+
   if (!workload) return null
 
   const w = workload
@@ -610,6 +625,117 @@ function WorkloadDetail({ workload, onBack, toast }) {
                 </table>
               </div>
             )}
+
+            {/* Resource Usage Charts */}
+            {(() => {
+              const cm = metrics?.containers?.find(m => m.name === c.name)
+              if (metricsLoading) return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Resource Usage Over Time</div>
+                  <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 12, color: C.dim }}>Loading metrics…</span>
+                  </div>
+                </div>
+              )
+              if (!cm || !cm.series?.length) return null
+
+              // Downsample if more than 200 points for performance
+              const maxPts = 200
+              const raw = cm.series
+              const step = raw.length > maxPts ? Math.ceil(raw.length / maxPts) : 1
+              const series = step > 1 ? raw.filter((_, i) => i % step === 0) : raw
+
+              const cpuData = series.map(pt => ({
+                time: new Date(pt.timestamp).getTime(),
+                cpu: pt.cpu_cores,
+              }))
+              const memData = series.map(pt => ({
+                time: new Date(pt.timestamp).getTime(),
+                mem: pt.memory_gib,
+              }))
+
+              const cpuReqVal = curReq.cpu_cores || 0
+              const cpuLimVal = curLim.cpu_cores || 0
+              const cpuRecVal = recReq.cpu_cores || 0
+              const memReqVal = curReq.memory_gib || 0
+              const memLimVal = curLim.memory_gib || 0
+              const memRecVal = recReq.memory_gib || 0
+
+              const timeFmt = (ts) => {
+                const d = new Date(ts)
+                return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+              }
+
+              const chartTooltipStyle = {
+                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
+                fontFamily: FONT.mono, fontSize: 11, padding: '8px 12px',
+              }
+
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Resource Usage Over Time</div>
+                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    {/* CPU Chart */}
+                    <div style={{ flex: '1 1 380px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 12px 8px' }}>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.cyan, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>CPU Usage (cores)</div>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <AreaChart data={cpuData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                          <defs>
+                            <linearGradient id={`cpuGrad-${ci}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={C.cyan} stopOpacity={0.3} />
+                              <stop offset="100%" stopColor={C.cyan} stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                          <XAxis dataKey="time" tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} tickFormatter={timeFmt} minTickGap={40} stroke={C.border} />
+                          <YAxis tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} stroke={C.border} tickFormatter={v => v < 1 ? `${(v*1000).toFixed(0)}m` : v.toFixed(2)} />
+                          <Tooltip contentStyle={chartTooltipStyle} labelFormatter={timeFmt} formatter={(v) => [v < 1 ? `${(v*1000).toFixed(0)}m` : v.toFixed(3), 'CPU']} />
+                          <Area type="monotone" dataKey="cpu" stroke={C.cyan} fill={`url(#cpuGrad-${ci})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                          {cpuReqVal > 0 && <ReferenceLine y={cpuReqVal} stroke={C.amber} strokeDasharray="6 3" label={{ value: 'Request', fill: C.amber, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                          {cpuLimVal > 0 && <ReferenceLine y={cpuLimVal} stroke={C.red} strokeDasharray="6 3" label={{ value: 'Limit', fill: C.red, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                          {cpuRecVal > 0 && <ReferenceLine y={cpuRecVal} stroke={C.green} strokeDasharray="4 2" label={{ value: 'Rec', fill: C.green, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Memory Chart */}
+                    <div style={{ flex: '1 1 380px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 12px 8px' }}>
+                      <div style={{ fontFamily: FONT.mono, fontSize: 10, color: C.purple, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Memory Usage (GiB)</div>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <AreaChart data={memData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                          <defs>
+                            <linearGradient id={`memGrad-${ci}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={C.purple} stopOpacity={0.3} />
+                              <stop offset="100%" stopColor={C.purple} stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                          <XAxis dataKey="time" tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} tickFormatter={timeFmt} minTickGap={40} stroke={C.border} />
+                          <YAxis tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} stroke={C.border} tickFormatter={v => v >= 1 ? `${v.toFixed(1)}` : `${(v*1024).toFixed(0)}Mi`} />
+                          <Tooltip contentStyle={chartTooltipStyle} labelFormatter={timeFmt} formatter={(v) => [v >= 1 ? `${v.toFixed(3)} GiB` : `${(v*1024).toFixed(0)} MiB`, 'Memory']} />
+                          <Area type="monotone" dataKey="mem" stroke={C.purple} fill={`url(#memGrad-${ci})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                          {memReqVal > 0 && <ReferenceLine y={memReqVal} stroke={C.amber} strokeDasharray="6 3" label={{ value: 'Request', fill: C.amber, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                          {memLimVal > 0 && <ReferenceLine y={memLimVal} stroke={C.red} strokeDasharray="6 3" label={{ value: 'Limit', fill: C.red, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                          {memRecVal > 0 && <ReferenceLine y={memRecVal} stroke={C.green} strokeDasharray="4 2" label={{ value: 'Rec', fill: C.green, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  {/* Chart Legend */}
+                  <div style={{ display: 'flex', gap: 20, marginTop: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 16, height: 2, background: C.amber, display: 'inline-block' }} /> Request
+                    </span>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 16, height: 2, background: C.red, display: 'inline-block' }} /> Limit
+                    </span>
+                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: C.dim, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 16, height: 2, background: C.green, display: 'inline-block' }} /> Recommended
+                    </span>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )
       })}

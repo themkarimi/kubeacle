@@ -2,6 +2,7 @@ package mock
 
 import (
 	"testing"
+	"time"
 
 	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
@@ -154,6 +155,75 @@ func TestGetAllWorkloads(t *testing.T) {
 	all2 := m.GetAllWorkloads()
 	if all2[0].Name == "modified" {
 		t.Error("GetAllWorkloads should return a copy, not a reference")
+	}
+}
+
+func TestGetWorkloadMetrics(t *testing.T) {
+	m := NewMockDataProvider(testConfig())
+
+	// Test with known workload
+	metrics := m.GetWorkloadMetrics("production", "web-frontend", 7*24*time.Hour)
+	if metrics == nil {
+		t.Fatal("expected non-nil metrics for production/web-frontend")
+	}
+	if metrics.Name != "web-frontend" {
+		t.Errorf("expected name 'web-frontend', got %q", metrics.Name)
+	}
+	if metrics.Namespace != "production" {
+		t.Errorf("expected namespace 'production', got %q", metrics.Namespace)
+	}
+	if len(metrics.Containers) == 0 {
+		t.Error("expected at least one container in metrics")
+	}
+	if metrics.StepSeconds != 300 {
+		t.Errorf("expected step 300s, got %d", metrics.StepSeconds)
+	}
+	for _, cm := range metrics.Containers {
+		if cm.Name == "" {
+			t.Error("container has empty name")
+		}
+		if len(cm.Series) == 0 {
+			t.Errorf("container %q has empty series", cm.Name)
+		}
+		// Check first point is valid
+		if len(cm.Series) > 0 {
+			pt := cm.Series[0]
+			if pt.Timestamp.IsZero() {
+				t.Error("first point has zero timestamp")
+			}
+			if pt.CPUCores <= 0 {
+				t.Errorf("first point has non-positive CPU: %f", pt.CPUCores)
+			}
+			if pt.MemoryGiB <= 0 {
+				t.Errorf("first point has non-positive memory: %f", pt.MemoryGiB)
+			}
+		}
+	}
+
+	// Test with nonexistent workload
+	nilMetrics := m.GetWorkloadMetrics("nonexistent", "nope", 7*24*time.Hour)
+	if nilMetrics != nil {
+		t.Error("expected nil for nonexistent workload")
+	}
+
+	// Test determinism: same input → same output
+	m2 := NewMockDataProvider(testConfig())
+	metrics2 := m2.GetWorkloadMetrics("production", "web-frontend", 7*24*time.Hour)
+	if len(metrics.Containers) != len(metrics2.Containers) {
+		t.Fatalf("container count mismatch: %d vs %d", len(metrics.Containers), len(metrics2.Containers))
+	}
+	for i := range metrics.Containers {
+		if len(metrics.Containers[i].Series) != len(metrics2.Containers[i].Series) {
+			t.Errorf("series length mismatch for container %d", i)
+			continue
+		}
+		if len(metrics.Containers[i].Series) > 0 {
+			p1 := metrics.Containers[i].Series[0]
+			p2 := metrics2.Containers[i].Series[0]
+			if p1.CPUCores != p2.CPUCores {
+				t.Errorf("CPU not deterministic: %f vs %f", p1.CPUCores, p2.CPUCores)
+			}
+		}
 	}
 }
 

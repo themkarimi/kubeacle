@@ -2,6 +2,7 @@ package mock
 
 import (
 	"math/rand"
+	"time"
 
 	"github.com/themkarimi/kubeacle/rightsizer/internal/models"
 )
@@ -309,6 +310,93 @@ func (m *MockDataProvider) generateBestEffortUsage() models.UsageStats {
 	cpuBase := 0.05 + m.rng.Float64()*0.15
 	memBase := 0.02 + m.rng.Float64()*0.10
 	return m.generateUsageStats(cpuBase, memBase)
+}
+
+// GetWorkloadMetrics generates synthetic time-series for the given workload.
+// It produces one point per step over the lookback window (default 7 days, 5-min step).
+func (m *MockDataProvider) GetWorkloadMetrics(namespace, name string, lookback time.Duration) *models.WorkloadMetrics {
+	var target *models.RawWorkload
+	for i := range m.workloads {
+		if m.workloads[i].Namespace == namespace && m.workloads[i].Name == name {
+			target = &m.workloads[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil
+	}
+
+	if lookback <= 0 {
+		lookback = 7 * 24 * time.Hour
+	}
+
+	stepDur := 5 * time.Minute
+	steps := int(lookback / stepDur)
+	if steps > 2016 { // cap at ~7 days of 5m steps
+		steps = 2016
+	}
+
+	// Use a local RNG seeded by workload identity so output is deterministic.
+	seed := int64(0)
+	for _, ch := range namespace + "/" + name {
+		seed = seed*31 + int64(ch)
+	}
+	rng := rand.New(rand.NewSource(seed))
+
+	now := time.Now().UTC().Truncate(stepDur)
+	start := now.Add(-time.Duration(steps) * stepDur)
+
+	cms := make([]models.ContainerMetrics, 0, len(target.Containers))
+	for _, c := range target.Containers {
+		baseCPU := c.Usage.Average.CPUCores
+		baseMem := c.Usage.Average.MemoryGiB
+		if baseCPU < 0.001 {
+			baseCPU = 0.01
+		}
+		if baseMem < 0.001 {
+			baseMem = 0.01
+		}
+
+		series := make([]models.TimeSeriesPoint, steps)
+		for i := 0; i < steps; i++ {
+			t := start.Add(time.Duration(i) * stepDur)
+			// Simulate a daily cycle: slightly higher during business hours
+			hour := t.Hour()
+			dayFactor := 1.0
+			if hour >= 9 && hour <= 17 {
+				dayFactor = 1.15 + rng.Float64()*0.15
+			} else {
+				dayFactor = 0.75 + rng.Float64()*0.15
+			}
+			// Add random noise
+			cpuNoise := 1.0 + (rng.Float64()-0.5)*0.3
+			memNoise := 1.0 + (rng.Float64()-0.5)*0.2
+			cpu := baseCPU * dayFactor * cpuNoise
+			mem := baseMem * dayFactor * memNoise
+			if cpu < 0.001 {
+				cpu = 0.001
+			}
+			if mem < 0.001 {
+				mem = 0.001
+			}
+			series[i] = models.TimeSeriesPoint{
+				Timestamp: t,
+				CPUCores:  cpu,
+				MemoryGiB: mem,
+			}
+		}
+		cms = append(cms, models.ContainerMetrics{
+			Name:   c.Name,
+			Series: series,
+		})
+	}
+
+	return &models.WorkloadMetrics{
+		Name:        target.Name,
+		Namespace:   target.Namespace,
+		Containers:  cms,
+		StepSeconds: int(stepDur.Seconds()),
+	}
 }
 
 // jitter returns v adjusted by a random factor in [-pct, +pct], clamped to >= 0.001.

@@ -128,6 +128,27 @@ type RawContainer struct {
 	Usage          UsageStats     `json:"usage"`
 }
 
+// TimeSeriesPoint is a single timestamped resource measurement.
+type TimeSeriesPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	CPUCores  float64   `json:"cpu_cores"`
+	MemoryGiB float64   `json:"memory_gib"`
+}
+
+// ContainerMetrics holds time-series data for a single container.
+type ContainerMetrics struct {
+	Name   string            `json:"name"`
+	Series []TimeSeriesPoint `json:"series"`
+}
+
+// WorkloadMetrics holds time-series data for all containers in a workload.
+type WorkloadMetrics struct {
+	Name       string             `json:"name"`
+	Namespace  string             `json:"namespace"`
+	Containers []ContainerMetrics `json:"containers"`
+	StepSeconds int               `json:"step_seconds"`
+}
+
 // PaginatedResponse is a generic paginated response
 type PaginatedResponse struct {
 	Data     interface{} `json:"data"`
