@@ -151,11 +151,6 @@ func (s *Server) handleGetWorkloads(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		var totalSaving float64
-		for _, c := range wa.Containers {
-			totalSaving += c.Recommended.EstimatedSaving
-		}
-
 		var totalStorageReclaim float64
 		for _, volume := range wa.PersistentVolumes {
 			totalStorageReclaim += volume.Recommended.ReclaimableGiB
@@ -173,7 +168,7 @@ func (s *Server) handleGetWorkloads(w http.ResponseWriter, r *http.Request) {
 			OverallRisk:                wa.OverallRisk,
 			Containers:                 len(wa.Containers),
 			PersistentVolumes:          len(wa.PersistentVolumes),
-			EstimatedSaving:            totalSaving,
+			EstimatedSaving:            totalSaving(wa),
 			EstimatedStorageReclaimGiB: totalStorageReclaim,
 		})
 	}
@@ -271,11 +266,8 @@ func (s *Server) handleGetRecommendations(w http.ResponseWriter, r *http.Request
 			return filtered[i].OverallWaste > filtered[j].OverallWaste
 		})
 	case "risk":
-		riskOrder := map[models.RiskLevel]int{
-			models.Critical: 3, models.High: 2, models.Medium: 1, models.Low: 0,
-		}
 		sort.Slice(filtered, func(i, j int) bool {
-			return riskOrder[filtered[i].OverallRisk] > riskOrder[filtered[j].OverallRisk]
+			return models.RiskOrder(filtered[i].OverallRisk) > models.RiskOrder(filtered[j].OverallRisk)
 		})
 	}
 
@@ -300,30 +292,7 @@ func (s *Server) handleGetClusterSummary(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	sanitized := struct {
-		PrometheusURL     string        `json:"prometheus_url"`
-		LookbackWindow    time.Duration `json:"lookback_window"`
-		HeadroomFactor    float64       `json:"headroom_factor"`
-		SpikePercentile   string        `json:"spike_percentile"`
-		CostPerCPUHour    float64       `json:"cost_per_cpu_hour"`
-		CostPerGiBHour    float64       `json:"cost_per_gib_hour"`
-		ExcludeNamespaces []string      `json:"exclude_namespaces"`
-		MockMode          bool          `json:"mock_mode"`
-		Port              int           `json:"port"`
-		RefreshInterval   time.Duration `json:"refresh_interval"`
-	}{
-		PrometheusURL:     s.cfg.PrometheusURL,
-		LookbackWindow:    s.cfg.LookbackWindow,
-		HeadroomFactor:    s.cfg.HeadroomFactor,
-		SpikePercentile:   s.cfg.SpikePercentile,
-		CostPerCPUHour:    s.cfg.CostPerCPUHour,
-		CostPerGiBHour:    s.cfg.CostPerGiBHour,
-		ExcludeNamespaces: s.cfg.ExcludeNamespaces,
-		MockMode:          s.cfg.MockMode,
-		Port:              s.cfg.Port,
-		RefreshInterval:   s.cfg.RefreshInterval,
-	}
-	writeJSON(w, http.StatusOK, sanitized)
+	writeJSON(w, http.StatusOK, s.cfg)
 }
 
 type configUpdate struct {
