@@ -1,6 +1,8 @@
 {{- if .Values.ingress.enabled -}}
 {{- $frontendFullName := include "kubeacle.frontend.fullname" . -}}
 {{- $frontendPort := .Values.frontend.service.port -}}
+{{- $backendFullName := include "kubeacle.backend.fullname" . -}}
+{{- $backendPort := .Values.backend.service.port -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -25,6 +27,22 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- if $.Values.backend.enabled }}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $backendFullName }}
+                port:
+                  number: {{ $backendPort }}
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $backendFullName }}
+                port:
+                  number: {{ $backendPort }}
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType }}
