@@ -43,6 +43,10 @@ data:
 
       # Scrape kubelet cAdvisor for live container resource usage
       # (container_cpu_usage_seconds_total, container_memory_working_set_bytes).
+      # Connects via the Kubernetes API server proxy.  insecure_skip_verify is
+      # set because the API-server proxy re-encrypts the connection and the
+      # presented certificate may not match "kubernetes.default.svc" on every
+      # distribution.  Traffic stays inside the cluster network.
       - job_name: 'kubelet-cadvisor'
         scheme: https
         tls_config:
@@ -62,6 +66,7 @@ data:
 
       # Scrape kubelet for volume stats
       # (kubelet_volume_stats_used_bytes, kubelet_volume_stats_capacity_bytes).
+      # Same API-server proxy approach as kubelet-cadvisor above.
       - job_name: 'kubelet'
         scheme: https
         tls_config:
