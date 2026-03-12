@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar,
-  XAxis, YAxis, Tooltip, RadialBarChart, RadialBar, Legend,
+  XAxis, YAxis, RadialBarChart, RadialBar, Legend,
   AreaChart, Area, CartesianGrid, ReferenceLine,
 } from 'recharts'
 
@@ -289,7 +289,6 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
               <Pie data={cpuData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" startAngle={90} endAngle={-270}>
                 {cpuData.map((_, i) => <Cell key={i} fill={RING_COLORS[i]} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, fontFamily: FONT.mono, fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
           <div style={{ textAlign: 'center', fontFamily: FONT.mono, fontSize: 13, color: C.dim }}>{cpuWaste.toFixed(1)}% wasted</div>
@@ -303,7 +302,6 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
               <Pie data={memData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value" startAngle={90} endAngle={-270}>
                 {memData.map((_, i) => <Cell key={i} fill={RING_COLORS_MEM[i]} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, fontFamily: FONT.mono, fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
           <div style={{ textAlign: 'center', fontFamily: FONT.mono, fontSize: 13, color: C.dim }}>{memWaste.toFixed(1)}% wasted</div>
@@ -317,7 +315,6 @@ function ClusterOverview({ summary, workloads, namespaces, loading }) {
               <Pie data={riskData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" paddingAngle={3}>
                 {riskData.map((entry, i) => <Cell key={i} fill={RISK_COLORS[entry.name] || C.muted} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, fontFamily: FONT.mono, fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -572,20 +569,6 @@ function WorkloadDetail({ workload, onBack, toast }) {
   const containers = w.containers || []
   const volumes = w.persistent_volumes || []
 
-  // Collect YAML patches and kubectl commands from all containers
-  const yamlPatch = containers.map(c => {
-    const rec = c.recommendation || {}
-    return rec.yaml_patch || `# ${c.name}\nresources:\n  requests:\n    cpu: "${(rec.request?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.request?.memory_gib || 0) * 1024).toFixed(0)}Mi"\n  limits:\n    cpu: "${(rec.limit?.cpu_cores || 0).toFixed(3)}"\n    memory: "${((rec.limit?.memory_gib || 0) * 1024).toFixed(0)}Mi"`
-  }).concat(volumes.map(v => {
-    const rec = v.recommendation || {}
-    return rec.yaml_patch || `# ${v.name}\nspec:\n  resources:\n    requests:\n      storage: "${Math.ceil(rec.request_gib || 0)}Gi"`
-  })).join('\n---\n')
-
-  const kubectlCmd = containers.map(c => {
-    const rec = c.recommendation || {}
-    return rec.kubectl_cmd || ''
-  }).concat(volumes.map(v => v.recommendation?.kubectl_cmd || '')).filter(Boolean).join('\n') || `kubectl set resources ${(w.type || 'Deployment').toLowerCase()}/${w.name} -n ${w.namespace}`
-
   // Collect all issues from all containers
   const allIssues = containers.flatMap(c => (c.issues || []).map(issue => ({ container: c.name, issue })))
   .concat(volumes.flatMap(v => (v.issues || []).map(issue => ({ container: v.name, issue }))))
@@ -781,11 +764,6 @@ function WorkloadDetail({ workload, onBack, toast }) {
                 return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
               }
 
-              const chartTooltipStyle = {
-                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
-                fontFamily: FONT.mono, fontSize: 11, padding: '8px 12px',
-              }
-
               return (
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontFamily: FONT.mono, fontSize: 11, color: C.dim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Resource Usage Over Time</div>
@@ -804,7 +782,6 @@ function WorkloadDetail({ workload, onBack, toast }) {
                           <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
                           <XAxis dataKey="time" tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} tickFormatter={timeFmt} minTickGap={40} stroke={C.border} />
                           <YAxis tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} stroke={C.border} tickFormatter={v => v < 1 ? `${(v*1000).toFixed(0)}m` : v.toFixed(2)} />
-                          <Tooltip contentStyle={chartTooltipStyle} labelFormatter={timeFmt} formatter={(v) => [v < 1 ? `${(v*1000).toFixed(0)}m` : v.toFixed(3), 'CPU']} />
                           <Area type="monotone" dataKey="cpu" stroke={C.cyan} fill={`url(#cpuGrad-${ci})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                           {cpuReqVal > 0 && <ReferenceLine y={cpuReqVal} stroke={C.amber} strokeDasharray="6 3" label={{ value: 'Request', fill: C.amber, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
                           {cpuLimVal > 0 && <ReferenceLine y={cpuLimVal} stroke={C.red} strokeDasharray="6 3" label={{ value: 'Limit', fill: C.red, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
@@ -827,7 +804,6 @@ function WorkloadDetail({ workload, onBack, toast }) {
                           <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
                           <XAxis dataKey="time" tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} tickFormatter={timeFmt} minTickGap={40} stroke={C.border} />
                           <YAxis tick={{ fill: C.dim, fontSize: 9, fontFamily: FONT.mono }} stroke={C.border} tickFormatter={v => v >= 1 ? `${v.toFixed(1)}` : `${(v*1024).toFixed(0)}Mi`} />
-                          <Tooltip contentStyle={chartTooltipStyle} labelFormatter={timeFmt} formatter={(v) => [v >= 1 ? `${v.toFixed(3)} GiB` : `${(v*1024).toFixed(0)} MiB`, 'Memory']} />
                           <Area type="monotone" dataKey="mem" stroke={C.purple} fill={`url(#memGrad-${ci})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                           {memReqVal > 0 && <ReferenceLine y={memReqVal} stroke={C.amber} strokeDasharray="6 3" label={{ value: 'Request', fill: C.amber, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
                           {memLimVal > 0 && <ReferenceLine y={memLimVal} stroke={C.red} strokeDasharray="6 3" label={{ value: 'Limit', fill: C.red, fontSize: 9, fontFamily: FONT.mono, position: 'right' }} />}
@@ -854,32 +830,6 @@ function WorkloadDetail({ workload, onBack, toast }) {
           </div>
         )
       })}
-
-      {/* YAML Patch */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontFamily: FONT.head, fontSize: 14, fontWeight: 600, color: C.text }}>YAML Patch</div>
-          <button onClick={() => { copyToClipboard(yamlPatch); toast('Copied YAML to clipboard', 'success') }} style={btnStyle()}>Copy</button>
-        </div>
-        <pre style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-          padding: 16, fontFamily: FONT.mono, fontSize: 12, color: C.cyan,
-          overflow: 'auto', maxHeight: 300, margin: 0, whiteSpace: 'pre-wrap',
-        }}>{yamlPatch}</pre>
-      </div>
-
-      {/* Kubectl Command */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontFamily: FONT.head, fontSize: 14, fontWeight: 600, color: C.text }}>kubectl Command</div>
-          <button onClick={() => { copyToClipboard(kubectlCmd); toast('Copied command to clipboard', 'success') }} style={btnStyle()}>Copy</button>
-        </div>
-        <pre style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-          padding: 16, fontFamily: FONT.mono, fontSize: 12, color: C.green,
-          overflow: 'auto', margin: 0, whiteSpace: 'pre-wrap',
-        }}>{kubectlCmd}</pre>
-      </div>
 
       {/* Issues */}
       {allIssues.length > 0 && (
